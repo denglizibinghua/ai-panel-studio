@@ -1,4 +1,4 @@
-# 核心 Prompt 记录
+﻿# 核心 Prompt 记录
 
 > 交付物之一，必须 ≥5 段，且覆盖 SDD / DDD / TDD / E2E 四个阶段。
 > **规则：每完成一个 Session 就追加一条，不要事后补写。** 面试会追问细节。
@@ -22,7 +22,7 @@
 ## 目录（填完把标题补上）
 
 - [x] S0 · 契约冻结 — 阶段：SDD
-- [ ] S1 · 接口与事件协议 — 阶段：SDD
+- [x] S1 · 接口与事件协议 — 阶段：SDD
 - [ ] S2 · 工程骨架与 seed — 阶段：SDD
 - [ ] S3 · 嘉宾生成与锁定 — 阶段：SDD
 - [ ] S4 · 主持人账本 — 阶段：TDD
@@ -101,5 +101,58 @@ consensus_points / divergence_points / agent_status / llm_calls
 改完 36 → 43 条 AC，全部含 `SHALL`。另有一处**结构性返工**：`confirm` 依赖事件总线，而事件总线在 S6 才有 —— 原计划把 `confirm` 放 S3 会直接 import 一个不存在的 `publish()`，已挪到 S6 末尾实现。
 
 **教训（写进工作说明用）**：AI 在"格式合规"和"局部设计合理性"上表现很好，在"跨阶段耦合"上几乎必错 —— 它不知道 S9 会写 200 字总结，也不知道 S3 早于 S6。所以契约阶段的审查重点不是语法，是**每一条约束在未来哪个 Session 会被触发**。
+
+---
+
+### S1 · 接口契约与事件协议
+
+**阶段**：SDD（API 契约 + 事件协议）
+
+**核心 Prompt**：
+
+```
+已读 AGENTS.md 与 specs/001-panel/spec.md（v1.0 已冻结）。
+本次执行 S1：接口契约与事件协议。只允许新建：
+  specs/001-panel/contracts/openapi.yaml
+  specs/001-panel/contracts/events.md
+输入：spec.md、data-model.md
+
+openapi.yaml 覆盖这 9 个端点，每个都要有成功响应 + 至少 1 个错误响应，
+错误码与 spec.md §4.2 逐字一致：
+  GET  /api/discussions（?active=1）/ POST /api/discussions / GET /api/discussions/{id}
+  POST /{id}/guests/generate / POST /{id}/guests/confirm
+  POST /{id}/start / POST /{id}/cancel
+  GET  /{id}/events（text/event-stream）/ GET /health
+
+events.md 定义 SSE 协议，每个族列出所有 type + payload 字段 + 触发时机 + 对应 AC 编号。
+硬性要求：
+  1. id = 该讨论内 seq（字符串化整数），每个持久事件必带；`: ping` 心跳不带。
+  2. 补发 exclusive：只补 seq > Last-Event-ID。
+  3. run.cancelled 与 run.failed 是两个不同事件，payload 不得共用结构。
+  4. 各族不得共用 payload；状态与 transcript 禁止混装（spec H1）。
+  5. 前端以 seq 为准，不得到达顺序推断业务顺序（AC-2.9）。
+  6. 每个 type 后面标上它覆盖哪条 AC，缺 AC 的 type 说明你多造了。
+
+做完只输出两个文件 + 你识别出的协议风险点（最多 3 条）。不要写实现。
+```
+
+**意图**：把 spec 的 43 条 AC 翻译成"机器可校验"的两份东西 —— 一份是 REST 的形状（谁进谁不进），一份是事件流的形状（id/补发/去重）。这一轮的价值不在"写了 838 行 YAML"，在于**逼它自己把 spec 里没想清的地方暴露出来**（比如 delta 到底有没有 seq）。所以我要求每个 type 必须挂 AC 编号 —— 挂不上的就是过度设计。
+
+**卡点**：它交回 19 个 type + 2 个控制帧，AC 覆盖矩阵齐全，还主动报了 3 条协议风险。三条里有两条是真问题，一条是**我自己 Prompt 写错造成的**：
+
+1. （**我的错**）我在 Prompt 里写"7 个事件族"，但 `data-model.md` §2.4 的 `events.type` 前缀白名单只有 6 个。它没有照抄，而是指出"`cancelled` 只能落在 `run.` 族内，第 7 组只能是控制帧；若要真造第 7 个前缀，S2 的 CHECK 会直接写失败"。**它纠正了指令里的错误，这是这次协作里最值得记的一笔。**
+2. （**真问题，风险最高**）`turn.delta` 不落库 ⇒ 没有 seq ⇒ 不在补发范围、也不在 AC-2.9 的去重规则覆盖内。它明确警告"S6 千万别给 delta 补 id，否则等于在 seq 序列里插假号"。
+3. （**它只说对一半**）它报"spec 字段命名混排"，实际比我以为的严重：`events.md` 全套 camelCase（`guestId` / `turnNo` / `speechType`），而 `openapi.yaml` 的 `Guest` 对象是 snake + camel 混着（`discussion_id` / `speaking_order` / `color_id` 旁边一个 `colorId`）。这是**两套线上格式**，不是一处笔误。
+
+另外我自查发现一个它没提的：`/health` 在 Key 缺失时返回 500 `LLM_NOT_CONFIGURED`。而 S2 的验收是"curl /health 返回 ok"，S2 阶段本来就没有 Key —— **这条会让 S2 第一次验收就红**，是我写 S0/S2 时埋的雷。
+
+**修正**：没有让它重写，而是先定三条口径再回写：
+
+- **命名**：全线 snake_case（API JSON = SSE payload = zod key = DB 列名），零映射层。用脚本对 `events.md` / `openapi.yaml` / `spec.md` 做了 19 个 token 的批量替换（`guestId→guest_id`、`speechType→speech_type`…），随后 `yaml.safe_load` 复核 8 个 path item / 9 个 operation，`Guest.required` 与新属性名一致。并在 `AGENTS.md` 补第 10 条不变量锁死这条规则，防止 S2 又转回 camel。
+- **事件族口径**：定稿为 **6 个持久族 + 2 个控制帧**（`: ping`、`caught_up`），`cancelled` 落在 `run.*` 内。同步改掉 `SESSION_MAP` 里我写错的"7 族"。
+- **delta 定位**：在 AC-1.9 里补一句 —— delta 不带 `id`、不参与 seq 去重与补发，断线期间丢失由 `turn.done.content` 整体覆盖。把它的口头警告固化成契约，否则 S6/S8 各理解一版。
+- **/health**：改成**永远 200**，body 自述 `{status, db, llm, now}`，`llm=missing` 是配置状态不是故障；业务请求的 Key 缺失仍走 AC-1.6 的 500。同时把 S2 的验收断言从"返回 ok"改成完整 body 形状。
+
+**教训**：AI 提出的"风险点"要分开看 —— 有些是它的发现（delta 无 seq 属真问题），有些是**我的 Prompt 与上游文档打架**（7 个族）。后者更危险，因为它会顺着指令做出一个合规但违背上层的实现。所以每次它报风险，第一件事是回去核对我自己的指令，而不是直接采信或直接驳回。
 
 ---

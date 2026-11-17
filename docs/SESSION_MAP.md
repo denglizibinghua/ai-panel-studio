@@ -1,4 +1,4 @@
-# Session 地图 — AI Panel Studio
+﻿# Session 地图 — AI Panel Studio
 
 > 这份文件回答一个问题：**72 小时内，把"一整场讨论"切成 AI 能一口吃下的 11 块，每块怎么开场。**
 > 每条提示词都可以直接复制粘贴。配套约束在 `AGENTS.md`。
@@ -104,18 +104,21 @@ openapi.yaml 必须覆盖这 9 个端点，每个都要有成功响应 + 至少 
   GET  /api/discussions/{id}/events  （text/event-stream）
   GET  /health
 
-events.md 定义 SSE 事件协议，7 个事件族，每个族列出所有 type + payload 字段
-+ 触发时机 + 对应 AC 编号：
+events.md 定义 SSE 事件协议，**6 个持久事件族 + 2 个控制帧**，每个族列出所有 type +
+payload 字段 + 触发时机 + 对应 AC 编号：
   state.*      讨论状态变化（含 cancelled 终态）
   run.*        run.started / run.finished / run.failed / run.cancelled（后两者不得共用 payload）
   agent.*      专家状态（idle/preparing/speaking）+ focus 文本
-  turn.*       turn.started / turn.delta / turn.done
+  turn.*       turn.started / turn.delta / turn.done（delta 不落库、不带 id）
   consensus.*  共识项新增或更新
   divergence.* 分歧项新增或更新
+  控制帧       `: ping` 心跳、`event: caught_up` 补发完成（都不落库、不占 seq）
+注意：`cancelled` 是 `run.` 族里的一个 type，**不是第 7 个族** —— data-model §2.4 的
+type 前缀白名单只有 6 个，新造前缀会让 S2 的 CHECK 直接写失败。
 硬性要求写进文档：
   1. id 字段 = 该讨论内的 seq（字符串化整数），每个持久事件都要带；`: ping` 心跳不带。
   2. 断线补发语义是 exclusive：只补 seq > Last-Event-ID 的事件。
-  3. 七族事件不得共用同一个 payload 结构；状态与 transcript 禁止混装（spec H1）。
+  3. 六族事件不得共用同一个 payload 结构；状态与 transcript 禁止混装（spec H1）。
   4. 写明"前端不得依靠事件到达顺序推断业务顺序，一律以 seq 为准"（AC-2.9）。
   5. **每个 type 后面标上它覆盖哪条 AC**；找不到 AC 的 type 就是过度设计，写清楚理由或删掉。
 
@@ -128,7 +131,7 @@ events.md 定义 SSE 事件协议，7 个事件族，每个族列出所有 type 
 
 - **输入**：`data-model.md`、`contracts/openapi.yaml`
 - **允许改**：根配置、`server/**`、`shared/**`、`web/**`（仅脚手架）、`scripts/**`
-- **验收**：`pnpm -C server test` 绿；`curl :8787/health` 返回 ok；库里 9 张表 + 5 条样例
+- **验收**：`pnpm -C server test` 绿；`curl :8787/health` 返回 `{status:ok, db:ok, llm:missing|configured}`（**永远 200**）；库里 9 张表 + 5 条样例
 
 ```
 已读 AGENTS.md。本次执行 S2：工程骨架 + 迁移 + seed。允许改的目录：
@@ -138,7 +141,7 @@ server/**, shared/**, web/**（仅脚手架）, scripts/**
 
 要做四件事，按顺序：
 1. pnpm workspace：web / server / shared 三个包，TS strict，Vitest 配好。
-2. server：Fastify 起在 8787，实现 GET /health 返回 {ok:true}。
+2. server：Fastify 起在 8787，实现 GET /health（按 contracts/openapi.yaml 的 HealthStatus：**永远 200**，body 含 status/db/llm/now；Key 未配置时 llm=missing，不返回 5xx）。
 3. 迁移：server/src/db/migrations/001_init.sql，严格按 data-model.md 建 9 张表，
    加 events(discussion_id, seq) 唯一索引。写一个 migrate.ts 幂等执行。
 4. seed：server/src/db/seed.ts 写入 5 条完整样例讨论（每场 1 主持 + 4 专家 = **5 行 guests**、
@@ -149,7 +152,7 @@ server/**, shared/**, web/**（仅脚手架）, scripts/**
 
 约束：不要接 LLM，不要写前端页面，不要写 README。
 验收：我要看到 —— pnpm install 成功；pnpm -C server test 绿（至少 1 个 health 测试）；
-curl http://localhost:8787/health 返回 ok；脚本能打印出 9 张表的行数。
+curl http://localhost:8787/health 返回 {status:ok, db:ok, llm:missing}；脚本能打印出 9 张表的行数。
 做完只汇报：改动文件树、三条验收命令的真实输出、遗留问题。
 ```
 
@@ -170,13 +173,13 @@ server/src/modules/guest/**, server/src/llm/**, tests/guest/**
 1. 模型调用必须走 server/src/llm/ 下的唯一出口（新建 llm/client.ts），
    Key 只从 process.env.DEEPSEEK_API_KEY 读，缺失时抛明确错误，不许 fallback 到假数据。
 2. 用 JSON 模式输出 1 位主持人 + N 位专家，字段严格按 Guest schema：
-   name / profession / stance / colorId / role(host|expert) / speakingOrder
+   name / profession / stance / color_id / role(host|expert) / speakingOrder
 3. 拿到响应后必须用 zod 二次校验；不合法就带着错误信息重试 1 次；仍不合法返回 422，
    并把原始输出写进服务端日志（注意：不得写进任何返回给前端的字段）。
 4. 校验通过后写入 guests 表，**locked=0**（同一事务内先 DELETE 该讨论 locked=0 的旧行，再看情况插入；
    这样"确认前反复点生成"只会替换阵容，不会越点越多）。
    若该讨论已有 locked=1 的嘉宾，返回 409 GUESTS_ALREADY_LOCKED，不许覆盖、不许追加。
-5. colorId 必须在 10 色板（amber/rose/sky/emerald/violet/orange/teal/lime/indigo/fuchsia）内
+5. color_id 必须在 10 色板（amber/rose/sky/emerald/violet/orange/teal/lime/indigo/fuchsia）内
    且互不重复，重复视为校验失败。
 
 > 注意：`confirm`（锁阵容 + 建 agent_status + 写 agent.status 事件）**不在本轮做**。
@@ -186,7 +189,7 @@ server/src/modules/guest/**, server/src/llm/**, tests/guest/**
   - 合规输出 → 5 条（1 主持 + 4 专家）落库且 locked=0
   - 缺 profession → 触发一次重试，重试后成功
   - 人数与 expert_count 不符 → 422
-  - colorId 重复 → 422
+  - color_id 重复 → 422
   - 已有 locked=1 时再 generate → 409；locked=0 时再 generate → 旧行被替换、行数仍为 5
 
 验收：pnpm -C server test -- guest 全绿，并把失败→通过的两次输出都贴给我。
@@ -250,7 +253,7 @@ ledger.ts 要求：
 server/src/modules/host/decide.ts, tests/host/decide.test.ts
 
 第一步：只写测试，不写实现，8 条全红，把红色输出贴给我：
-1. 正常账本 → 返回 {action:'speak', guestId, speechType, instruction}
+1. 正常账本 → 返回 {action:'speak', guest_id, speech_type, instruction}
 2. next_speaker 不在名单 → 降级为最久未发言者
 3. is_request_satisfied=true → 返回 {action:'summarize'}
 4. 连续 3 次 is_in_loop → 返回 {action:'force_stop', reason:'loop'}
@@ -279,10 +282,10 @@ server/src/modules/sse/**, server/src/modules/guest/confirm.ts, tests/sse/**
 输入：specs/001-panel/contracts/events.md
 
 实现：
-1. bus.ts：内存里 Map<discussionId, Set<subscriber>>，提供 publish(discussionId, event)
-   与 subscribe(discussionId, lastEventId, res)。
+1. bus.ts：内存里 Map<discussion_id, Set<subscriber>>，提供 publish(discussion_id, event)
+   与 subscribe(discussion_id, lastEventId, res)。
 2. 每个事件写进 events 表（discussion_id + seq 自增），再推给该讨论的订阅者。
-   **只推给同 discussionId 的订阅者**，这是隔离的唯一保证。
+   **只推给同 discussion_id 的订阅者**，这是隔离的唯一保证。
 3. 订阅时若带 Last-Event-ID，先从 events 表补 seq > 该值的事件，补完发一个
    `event: caught_up`，再进入实时态。
 4. 响应头：Content-Type: text/event-stream; charset=utf-8、

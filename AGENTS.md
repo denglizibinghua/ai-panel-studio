@@ -104,6 +104,7 @@ specs/001-panel/
 8. 前端**不展示**原始 JSON、不展示 chain-of-thought、不展示 `ledger` 表内容。总结必须是自然语言。
 9. **共识 / 分歧是增量写的**：每 2 轮发言触发一次提炼，写入 `consensus_points` / `divergence_points` 并置 `status='provisional'`；讨论结束时做一次归并，保留项置 `status='final'`。前端按 `updated_seq` 增量渲染，**不整块重刷**。
    （这样既满足"实时更新"，又不会每轮都多打一次模型调用烧额度。）
+10. **线上字段一律 snake_case**：API JSON、SSE payload、zod schema key、DB 列名四者同名，**禁止在中间做 camel↔snake 映射**。契约文件（`contracts/`）是唯一拼写权威。
 
 ---
 

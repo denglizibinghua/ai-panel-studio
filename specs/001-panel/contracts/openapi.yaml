@@ -1,0 +1,846 @@
+﻿openapi: 3.0.3
+info:
+  title: AI Panel Studio API
+  version: 1.0.0
+  description: |
+    S1 冻结版接口契约。行为真相源：`specs/001-panel/spec.md` v1.0；
+    表结构真相源：`specs/001-panel/data-model.md`；SSE 事件细节：`contracts/events.md`。
+
+    通用约定（全部端点适用）：
+    1. 无鉴权、无多租户。`session_id` 仅用于前端判定「发起者 / 观察者」（AC-3.8），
+       后端不据此拒绝任何请求（AGENTS §2）。
+    2. 所有错误响应体统一为 `Error`：`{ code, message }`。**前端只按 `code` 分支**，
+       不得解析 `message`（spec §4.2）。
+    3. `code` 取值严格来自 spec §4.2，本契约不新增任何错误码。
+    4. 时间字段一律 ISO-8601 UTC 毫秒精度，形如 `2026-11-17T08:30:00.000Z`。
+    5. 字段命名按 spec 原文落地：`expert_count` / `updated_at` 为 snake_case（AC-3.1 原文），
+       `color_id` 为 camelCase（AC-1.3 原文）。DB 列名一律 snake_case（`color_id`）。
+    6. 讨论 `id` 不存在一律 404 `DISCUSSION_NOT_FOUND`；状态机不允许的迁移一律
+       409 `INVALID_STATE_TRANSITION` 且 `status` 不变（spec §4.1）。
+    7. 本契约内不存在任何「五合一」响应：`turns` / `consensus_points` / `divergence_points` /
+       `agent_status` 都不出现在 REST 响应里，只通过 `GET /api/discussions/{id}/events` 的
+       独立事件族送达（H1 / AGENTS §6.4）。`guests` 是阵容（非五流之一），随详情返回。
+    8. 不返回 `ledger`、`llm_calls`、`raw_json`、`error_message`（AC-1.17 / data-model §5 INV-7）。
+servers:
+  - url: http://localhost:3000
+    description: 本地开发默认地址（端口由 `PORT` 环境变量决定，非契约的一部分）
+tags:
+  - name: discussions
+    description: 讨论列表、创建、详情
+  - name: guests
+    description: 阵容生成与两段式锁定（generate 写 locked=0，confirm 置 locked=1）
+  - name: run
+    description: 开始与取消
+  - name: events
+    description: SSE 事件流（唯一可重放源）
+  - name: ops
+    description: 健康探针
+paths:
+  /api/discussions:
+    get:
+      operationId: listDiscussions
+      tags: [discussions]
+      summary: 列出全部讨论
+      description: |
+        返回全部讨论，按 `updated_at` 倒序（AC-3.1）。
+        带 `?active=1` 时只返回进行中状态（`draft` / `generating` / `ready` / `running`），
+        供首页「进行中」分组使用（AC-3.2）。已结束（`finished` / `failed` / `cancelled`）仅在
+        不带 `active` 时返回。
+        本接口不返回 guests / turns / 共识 / 分歧 / 状态流，避免五合一数组（H1）。
+      parameters:
+        - $ref: '#/components/parameters/ActiveQuery'
+      responses:
+        '200':
+          description: 讨论摘要数组（可能为空数组），按 `updated_at` DESC。
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DiscussionSummary'
+        '400':
+          description: |
+            `active` 取值不合法（只接受 `0` / `1`）→ `INVALID_INPUT`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_INPUT
+                message: active 只能是 0 或 1
+
+    post:
+      operationId: createDiscussion
+      tags: [discussions]
+      summary: 创建讨论（status=draft）
+      description: |
+        在 1s 内创建 `status='draft'` 的讨论并返回其整数 `id`（AC-1.1）。
+        创建本身不调用模型，不产生 guests。
+        落库时同时写入首个事件 `state.draft`（`seq=1`，`previous_status=null`），
+        因此响应中的 `last_event_seq` 恒为 1。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDiscussionRequest'
+            example:
+              topic: AI 会取代初级程序员吗？
+              expert_count: 4
+              session_id: 7f3c1a2b9d
+      responses:
+        '201':
+          description: 创建成功，返回完整讨论（`status='draft'`，`guests` 为空数组）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscussionDetail'
+        '400':
+          description: |
+            `topic` 为空或超 200 字、`expert_count` 不在 `[1,8]`、`session_id` 超 64 字
+            → `INVALID_INPUT`；且 `discussions` 表行数不变（AC-1.2）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_INPUT
+                message: topic 长度必须为 1-200
+
+  /api/discussions/{id}:
+    get:
+      operationId: getDiscussion
+      tags: [discussions]
+      summary: 讨论详情（含阵容）
+      description: |
+        返回讨论主体 + 全部 `guests`（不论 `locked` 值；确认页依赖 `locked=0` 的待确认阵容）。
+        `status` 必须由 `modules/discussion/status.ts` 的同一函数计算，与 SSE `state.*`
+        同源（AGENTS §6.7 / H8）。
+        本接口 **不** 返回 turns / 共识 / 分歧 / agent_status —— 这三类由 SSE 事件族送达；
+        观察者以 `Last-Event-ID: 0` 重放即可还原（AC-3.4 / AC-3.5）。
+        404 时前端不得建立 SSE 连接（AC-3.6）。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+      responses:
+        '200':
+          description: 讨论详情。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscussionDetail'
+        '404':
+          description: |
+            讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`（AC-3.6）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+
+  /api/discussions/{id}/guests/generate:
+    post:
+      operationId: generateGuests
+      tags: [guests]
+      summary: 生成嘉宾阵容（写 locked=0）
+      description: |
+        30s 内返回 1 位 `role='host'` + `expert_count` 位 `role='expert'`，每人 `name` /
+        `profession` / `stance` / `color_id` 非空，同讨论内 `color_id` 两两不同，**全部以
+        `locked=0` 落库**（AC-1.3）。
+        幂等语义：若该讨论已存在 `locked=1` 的嘉宾 → 409 `GUESTS_ALREADY_LOCKED` 且
+        `guests` 行数不变（AC-1.4）；否则先删除该讨论全部 `locked=0` 的 `guests` 行及其
+        `agent_status` 行，再写入新阵容（AC-1.4，重复生成不叠加）。
+        失败原子性：模型输出经 zod 两次校验（含 1 次重试）仍不合法 → 422
+        `GUEST_OUTPUT_INVALID`，`guests` 行数与调用前一致，不得留半套阵容（AC-1.5）。
+        SSE：过程中 `state.generating`（若已订阅），成功后 `state.draft`，均带 seq。
+        请求体为空；不接受任何客端指定的阵容字段。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+      responses:
+        '200':
+          description: 生成成功，阵容待确认（`status='draft'`，`guests[].locked=false`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateGuestsResponse'
+        '404':
+          description: 讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+        '409':
+          description: |
+            两种 409，前端按 `code` 区分：
+            - `GUESTS_ALREADY_LOCKED`：已存在 `locked=1` 嘉宾，已确认阵容不可覆盖（AC-1.4）；
+            - `INVALID_STATE_TRANSITION`：当前 `status` 不允许生成（仅 `draft` 允许；
+              `running` / `finished` / `failed` / `cancelled` 一律拒绝，spec §4.1）。
+            两种情况下 `guests` 行数都不变。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                alreadyLocked:
+                  value:
+                    code: GUESTS_ALREADY_LOCKED
+                    message: 阵容已确认，不可重新生成
+                invalidTransition:
+                  value:
+                    code: INVALID_STATE_TRANSITION
+                    message: 当前状态不允许生成嘉宾
+        '422':
+          description: |
+            模型输出两次校验均不合法（缺字段 / 人数不符 / 色板外 / 颜色重复 / 超 30s）
+            → `GUEST_OUTPUT_INVALID`（AC-1.5，spec §4.3 时间预算）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: GUEST_OUTPUT_INVALID
+                message: 嘉宾输出校验失败
+        '500':
+          description: |
+            两种 500：
+            - `LLM_NOT_CONFIGURED`：`process.env.DEEPSEEK_API_KEY` 缺失，**不得返回任何伪造嘉宾**（AC-1.6）；
+            - `LLM_UPSTREAM_ERROR`：模型服务不可用 / 超时（spec §4.2）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notConfigured:
+                  value:
+                    code: LLM_NOT_CONFIGURED
+                    message: 未配置 DEEPSEEK_API_KEY
+                upstream:
+                  value:
+                    code: LLM_UPSTREAM_ERROR
+                    message: 模型服务不可用
+
+  /api/discussions/{id}/guests/confirm:
+    post:
+      operationId: confirmGuests
+      tags: [guests]
+      summary: 确认阵容（单事务置 locked=1）
+      description: |
+        在**一个事务**内完成（AC-1.7）：
+        1. 该讨论全部 `guests.locked` 置 1；
+        2. 为每位嘉宾建一行 `agent_status(state='idle')`；
+        3. 为每位嘉宾写入一条 `agent.status` 事件（`updated_seq` 取该事件 seq，不得留 0）；
+        4. `discussions.status` 置 `ready`。
+        前置校验：`guests` 行数必须等于 `expert_count + 1`，否则 409
+        `GUEST_COUNT_MISMATCH` 且不产生任何副作用（AC-1.7b）。
+        响应不携带 agent_status —— 状态只走 `agent.*` 事件族（H1）。
+        请求体为空。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+      responses:
+        '200':
+          description: 确认成功（`status='ready'`，`guests[].locked=true`）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmGuestsResponse'
+        '404':
+          description: 讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+        '409':
+          description: |
+            两种 409：
+            - `GUEST_COUNT_MISMATCH`：`guests` 行数 ≠ `expert_count + 1`（AC-1.7b）；
+            - `INVALID_STATE_TRANSITION`：当前 `status` 不是 `draft`（已 `ready` / `running` /
+              终态），或尚无任何 `guests` 行可确认（spec §4.1）。
+            两种情况都不落库任何变更。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                countMismatch:
+                  value:
+                    code: GUEST_COUNT_MISMATCH
+                    message: 嘉宾数量与 expert_count 不匹配
+                invalidTransition:
+                  value:
+                    code: INVALID_STATE_TRANSITION
+                    message: 当前状态不允许确认
+
+  /api/discussions/{id}/start:
+    post:
+      operationId: startDiscussion
+      tags: [run]
+      summary: 开始讨论（ready → running）
+      description: |
+        仅允许 `ready → running`。5s 内落库并推送 `run.started`，随后产出主持人开场 turn
+        （`speech_type='opening'`，以 `turn.started` / `turn.delta` / `turn.done` 推送）（AC-1.8）。
+        响应返回时 `run.started` 已落库（`seq` 已分配）；后续发言在后台异步推进，客户端以 SSE 为准。
+        并发硬闸：同时 `running` 已达 3 场 → 409 `TOO_MANY_RUNNING`，被拒讨论 `status` 不变
+        （AC-2.10）。
+        请求体为空。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+      responses:
+        '200':
+          description: 已开始，`status='running'`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartResponse'
+        '404':
+          description: 讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+        '409':
+          description: |
+            两种 409：
+            - `INVALID_STATE_TRANSITION`：当前 `status` 不是 `ready`（含重复 start、已取消、已结束）；
+            - `TOO_MANY_RUNNING`：当前 `running` 已达 3 场（AC-2.10）。
+            两种情况 `status` 都不变。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidTransition:
+                  value:
+                    code: INVALID_STATE_TRANSITION
+                    message: 只有 ready 状态可以开始
+                tooManyRunning:
+                  value:
+                    code: TOO_MANY_RUNNING
+                    message: 同时进行的讨论已达 3 场
+        '500':
+          description: |
+            `LLM_NOT_CONFIGURED`：`process.env.DEEPSEEK_API_KEY` 缺失，无法产出开场（AC-1.6 同码）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: LLM_NOT_CONFIGURED
+                message: 未配置 DEEPSEEK_API_KEY
+
+  /api/discussions/{id}/cancel:
+    post:
+      operationId: cancelDiscussion
+      tags: [run]
+      summary: 取消讨论（终态 cancelled）
+      description: |
+        允许的来源状态：`draft` / `generating` / `ready` / `running`（spec §4.1）。
+        置 `status='cancelled'`、写入 `finished_at` 为当前时间、推送 `run.cancelled`，
+        并**不再产生任何 turn**（AC-1.24）。
+        `cancelled` 与 `failed` 严格区分：`error_code` 恒为 NULL，前端文案「已取消」；
+        `run.cancelled` 与 `run.failed` 是两个不同事件且 payload 结构不共用（`events.md` §5）。
+        请求体为空。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+      responses:
+        '200':
+          description: 已取消，`status='cancelled'`、`error_code=null`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelResponse'
+        '404':
+          description: 讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+        '409':
+          description: |
+            `INVALID_STATE_TRANSITION`：当前已是终态（`finished` / `failed` / `cancelled`）
+            或不允许取消，`status` 不变（spec §4.1）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_STATE_TRANSITION
+                message: 该状态不可取消
+
+  /api/discussions/{id}/events:
+    get:
+      operationId: subscribeDiscussionEvents
+      tags: [events]
+      summary: 订阅讨论事件流（SSE）
+      description: |
+        `text/event-stream`。协议细节（事件族、payload、补发语义、心跳）以
+        `specs/001-panel/contracts/events.md` 为唯一真相源，本处只冻结传输层外观。
+
+        帧格式：
+        - `id:` = 该讨论内 `events.seq` 的字符串化整数（**每个持久事件必带**）；
+        - `event:` = `events.type`；
+        - `data:` = `events.payload` 的 JSON 原文（单行，不得包信封、不得增删字段）。
+        心跳为注释帧 `: ping`（15s 一次，**无 `id`**，不推进 `seq`，AC-2.6）。
+        补发完成后发送一次 `event: caught_up`（无 `id`，`data` 为 `{"up_to_seq":n}`）。
+
+        补发语义（AC-2.3）：携带 `Last-Event-ID: k` 时，**只补发该讨论 `seq > k`** 的事件
+        （strictly exclusive），按 `seq` 升序；`k` 缺失 / 非法按 `0` 处理；`k` 不小于当前
+        `last_event_seq` 时补发 0 条，仍发一次 `caught_up`。
+        隔离：只推送本体讨论的事件（AC-2.2）；`seq` 每讨论独立从 1 起（AC-2.1）。
+        订阅者全部断开不改变 `status` 与调度（AC-2.5）；连接关闭或报错 1s 内清理定时器与订阅
+        集合（AC-2.7）。
+        404 时不建立 SSE 流（前端不得重连）（AC-3.6）。
+        客户端必须以 `seq` 去重排序，不得以到达顺序推断业务顺序（AC-2.9）。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: |
+            客户端已处理的最大 `seq`。只补发 `seq >` 该值的持久事件（exclusive，AC-2.3）。
+            浏览器 EventSource 断线重连时自动携带最后一次收到的 `id:`。
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+            example: '42'
+      responses:
+        '200':
+          description: |
+            SSE 长连接。内容为持续输出的事件帧；服务端按 `seq` 升序推送，允许「已落库未推送」
+            的短暂中间态，永不出现「已推送未落库」。
+          headers:
+            Cache-Control:
+              description: 必须为 `no-cache`，禁止中间层缓存。
+              schema:
+                type: string
+            Connection:
+              description: 必须为 `keep-alive`。
+              schema:
+                type: string
+            X-Accel-Buffering:
+              description: 必须为 `no`，禁止反向代理缓冲（否则实时性失效）。
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 原始帧流（逐帧见 examples）。
+              example: |
+                id: 1
+                event: state.draft
+                data: {"status":"draft","previous_status":null,"updated_at":"2026-11-17T08:30:00.000Z"}
+
+                id: 2
+                event: state.generating
+                data: {"status":"generating","previous_status":"draft","updated_at":"2026-11-17T08:30:01.000Z"}
+
+                id: 3
+                event: state.draft
+                data: {"status":"draft","previous_status":"generating","updated_at":"2026-11-17T08:30:12.000Z"}
+
+                id: 4
+                event: state.ready
+                data: {"status":"ready","previous_status":"draft","updated_at":"2026-11-17T08:30:20.000Z"}
+
+                id: 5
+                event: agent.status
+                data: {"guest_id":12,"state":"idle","focus":null}
+
+                id: 6
+                event: state.running
+                data: {"status":"running","previous_status":"ready","updated_at":"2026-11-17T08:30:25.000Z"}
+
+                id: 7
+                event: run.started
+                data: {"started_at":"2026-11-17T08:30:25.000Z","expert_count":4}
+
+                id: 8
+                event: turn.started
+                data: {"guest_id":11,"turn_no":1,"speech_type":"opening"}
+
+                : ping
+
+                event: caught_up
+                data: {"up_to_seq":8}
+
+        '404':
+          description: |
+            讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`；**不建立 SSE 流**（AC-3.6）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+
+  /health:
+    get:
+      operationId: getHealth
+      tags: [ops]
+      summary: 健康探针（进程存活 + 依赖状态自述）
+      description: |
+        探针口径（**永远 200**，不新增错误码，不因未配置 Key 而失败）：
+        - 进程能响应 → 200，由响应体自述依赖状态；
+        - `llm` 反映 `process.env.DEEPSEEK_API_KEY` 是否就绪（`configured` / `missing`），
+          **不返回 5xx**——未配置 Key 是配置状态，不是服务故障；
+        - `db` 反映 SQLite 是否可读写（`ok` / `error`），探针只做一次 `SELECT 1`，
+          不扫表、不建表。
+        本探针**无网络、无计费**，不调用 DeepSeek（避免烧额度）。
+        业务请求的 Key 缺失仍按 AC-1.6 返回 500 `LLM_NOT_CONFIGURED`，与探针解耦。
+      responses:
+        '200':
+          description: 进程存活；依赖状态见响应体，**任何情况下都不返回 5xx**。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: ok
+                db: ok
+                llm: missing
+                now: '2026-11-17T08:30:00.000Z'
+
+components:
+  parameters:
+    DiscussionId:
+      name: id
+      in: path
+      required: true
+      description: 讨论主键（`discussions.id`），正整数。
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    ActiveQuery:
+      name: active
+      in: query
+      required: false
+      description: |
+        `1` = 只返回进行中（`draft` / `generating` / `ready` / `running`）；`0` 或缺省 = 返回全部
+        （AC-3.2）。其他取值 → 400 `INVALID_INPUT`。
+      schema:
+        type: integer
+        enum: [0, 1]
+      example: 1
+
+  schemas:
+    DiscussionStatus:
+      type: string
+      description: |
+        讨论状态枚举，与 data-model §2.1 逐字一致；迁移只允许 spec §4.1 列出的路径。
+        `cancelled` 是终态，且其 `error_code` 恒为 `null`（AC-1.24）。
+      enum: [draft, generating, ready, running, finished, failed, cancelled]
+
+    ErrorCode:
+      type: string
+      description: |
+        spec §4.2 的 9 个错误码，逐字一致；本契约不新增任何码。
+      enum:
+        - INVALID_INPUT
+        - DISCUSSION_NOT_FOUND
+        - GUESTS_ALREADY_LOCKED
+        - GUEST_COUNT_MISMATCH
+        - INVALID_STATE_TRANSITION
+        - TOO_MANY_RUNNING
+        - GUEST_OUTPUT_INVALID
+        - LLM_NOT_CONFIGURED
+        - LLM_UPSTREAM_ERROR
+
+    Error:
+      type: object
+      description: |
+        统一错误体。前端只按 `code` 分支（spec §4.2）；`message` 仅供人阅读，不得用于逻辑判断。
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: 中文可读说明，不含 prompt / 上游原文 / stack。
+          maxLength: 200
+        details:
+          type: object
+          description: 可选的结构化校验细节（如 zod issue 列表），不含请求体原文。
+          additionalProperties: true
+
+    ColorId:
+      type: string
+      description: |
+        固定 10 色板（data-model §2.2）；同一讨论内唯一。字段名 `color_id` 按 spec AC-1.3 原文。
+      enum: [amber, rose, sky, emerald, violet, orange, teal, lime, indigo, fuchsia]
+
+    GuestRole:
+      type: string
+      enum: [host, expert]
+
+    Guest:
+      type: object
+      description: |
+        阵容成员（`guests` 表一行的对外投影）。`locked=false` 为待确认阵容，
+        `locked=true` 为已确认、此后不可增删改（AC-1.4 / H2）。
+        颜色只在此处出现；SSE 的 `turn.done` 不含 `color_id`，色块必须用 `guest_id` join 本对象
+        （AC-1.22，避免两处颜色漂移）。
+      required: [id, discussion_id, name, profession, stance, color_id, role, speaking_order, locked]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: '`guests.id`；SSE 事件用 `guest_id` 引用它。'
+        discussion_id:
+          type: integer
+          format: int64
+          minimum: 1
+        name:
+          type: string
+          minLength: 1
+          maxLength: 32
+        profession:
+          type: string
+          minLength: 1
+          maxLength: 40
+          description: 职业 / Title。
+        stance:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: 立场一句话。
+        color_id:
+          $ref: '#/components/schemas/ColorId'
+        role:
+          $ref: '#/components/schemas/GuestRole'
+        speaking_order:
+          type: integer
+          minimum: 0
+          maximum: 8
+          description: '仅用于「最久未发言」同分时的稳定排序，**不是发言顺序**（data-model §2.2）。'
+        locked:
+          type: boolean
+          description: '对应 `guests.locked`（DB 为 0/1）：`false` 待确认，`true` 已确认冻结。'
+
+    DiscussionSummary:
+      type: object
+      description: 列表行与详情共同字段（AC-3.1 的「至少含」）。
+      required: [id, topic, status, expert_count, updated_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+        topic:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          $ref: '#/components/schemas/DiscussionStatus'
+        expert_count:
+          type: integer
+          minimum: 1
+          maximum: 8
+          description: 专家人数（不含主持人）；默认 4。
+        updated_at:
+          type: string
+          format: date-time
+          description: 任何字段变更或事件写入都刷新；列表按此字段倒序（AC-3.1）。
+
+    DiscussionDetail:
+      description: |
+        讨论详情 = 讨论主体 + 阵容。**不含** turns / 共识 / 分歧 / agent_status（H1）。
+      allOf:
+        - $ref: '#/components/schemas/DiscussionSummary'
+        - type: object
+          required:
+            - session_id
+            - summary_text
+            - error_code
+            - last_event_seq
+            - created_at
+            - started_at
+            - finished_at
+            - guests
+          properties:
+            session_id:
+              type: string
+              nullable: true
+              maxLength: 64
+              description: '发起者匿名标识；仅用于前端判定是否隐藏四个写操作入口（AC-3.8），后端不校验。'
+            summary_text:
+              type: string
+              nullable: true
+              maxLength: 400
+              description: |
+                `status='finished'` 时为 150–250 字中文纯文本总结（AC-1.14）；空 transcript 用固定文案
+                「本场讨论未产生有效发言」（AC-1.15）。其他状态为 `null`。
+            error_code:
+              type: string
+              nullable: true
+              enum:
+                - LLM_NOT_CONFIGURED
+                - LLM_UPSTREAM_ERROR
+                - ALL_SPEAKERS_FAILED
+              description: |
+                失败原因码（data-model §2.1 枚举）。`status='cancelled'` 时恒为 `null`；
+                非失败状态一般为 `null`。不返回 `error_message`（仅人工排查，AC-1.17）。
+            last_event_seq:
+              type: integer
+              minimum: 0
+              description: |
+                该讨论 `events.seq` 计数器当前值（唯一取号点）。客户端可用它作为
+                `Last-Event-ID` 的水位参考。
+            created_at:
+              type: string
+              format: date-time
+            started_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: 进入 `running` 时写入。
+            finished_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: 进入 `finished` / `failed` / `cancelled` 时写入。
+            guests:
+              type: array
+              description: 全部阵容成员（含 `locked=0` 待确认行）；无阵容时为空数组。
+              items:
+                $ref: '#/components/schemas/Guest'
+
+    CreateDiscussionRequest:
+      type: object
+      required: [topic]
+      additionalProperties: false
+      properties:
+        topic:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 议题原文，按字符计长（AC-1.2）。
+        expert_count:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 4
+          description: 专家人数，不含主持人；越界 → 400 `INVALID_INPUT`。
+        session_id:
+          type: string
+          maxLength: 64
+          description: 客户端匿名标识，可选。用于 AC-3.8 的前端能力隐藏。
+
+    GenerateGuestsResponse:
+      type: object
+      required: [discussion_id, status, guests]
+      additionalProperties: false
+      properties:
+        discussion_id:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum: [draft]
+          description: 生成成功后回到 `draft`（阵容待确认，spec §4.1）。
+        guests:
+          type: array
+          minItems: 2
+          maxItems: 9
+          description: 1 位 host + expert_count 位 expert，全部 `locked=false`。
+          items:
+            $ref: '#/components/schemas/Guest'
+
+    ConfirmGuestsResponse:
+      type: object
+      required: [discussion_id, status, guests]
+      additionalProperties: false
+      properties:
+        discussion_id:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum: [ready]
+        guests:
+          type: array
+          minItems: 2
+          maxItems: 9
+          description: 全部 `locked=true`；每位嘉宾另有一条 `agent.status(state='idle')` 事件（AC-1.7）。
+          items:
+            $ref: '#/components/schemas/Guest'
+
+    StartResponse:
+      type: object
+      required: [id, status, started_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum: [running]
+        started_at:
+          type: string
+          format: date-time
+
+    CancelResponse:
+      type: object
+      required: [id, status, finished_at, error_code]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum: [cancelled]
+        finished_at:
+          type: string
+          format: date-time
+        error_code:
+          type: string
+          nullable: true
+          description: |
+            恒为 `null` —— 取消不是错误（AC-1.24），与 `failed` 严格区分；
+            不存在 `run.failed` + `error_code:null` 这种伪造取消的形态（见 `events.md` §6.4）。
+
+    HealthStatus:
+      type: object
+      required: [status, db, llm, now]
+      additionalProperties: false
+      description: |
+        探针响应体。**永远 200**；依赖状态由字段自述，不用 HTTP 码表达。
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        db:
+          type: string
+          enum: [ok, error]
+          description: SQLite 一次 `SELECT 1` 的结果。
+        llm:
+          type: string
+          enum: [configured, missing]
+          description: '`DEEPSEEK_API_KEY` 是否就绪；`missing` 不影响本探针返回 200。'
+        now:
+          type: string
+          format: date-time

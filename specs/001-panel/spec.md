@@ -1,4 +1,4 @@
-# spec.md — AI Panel Studio 行为与验收契约
+﻿# spec.md — AI Panel Studio 行为与验收契约
 
 > 阶段：S0 契约冻结（SDD）
 > 输入：`docs/REQUIREMENTS.md`（真相源最高优先级）
@@ -49,14 +49,14 @@
 
 - AC-1.1 WHEN 用户提交 `topic`（1–200 字）与 `expert_count ∈ [1,8]` THEN THE SYSTEM SHALL 在 1s 内创建 `status='draft'` 的讨论并返回其整数 `id`。
 - AC-1.2 IF `topic` 为空或超 200 字，或 `expert_count` 越界 THEN THE SYSTEM SHALL 返回 400，且 `discussions` 表行数不变。
-- AC-1.3 WHEN 用户请求为 `draft` 讨论生成嘉宾 THEN THE SYSTEM SHALL 在 30s 内返回 1 位 `role='host'` 与 `expert_count` 位 `role='expert'`，每人均含非空 `name / profession / stance / colorId`，同一讨论内 `colorId` 两两不同，且**全部以 `locked=0` 落库**。
+- AC-1.3 WHEN 用户请求为 `draft` 讨论生成嘉宾 THEN THE SYSTEM SHALL 在 30s 内返回 1 位 `role='host'` 与 `expert_count` 位 `role='expert'`，每人均含非空 `name / profession / stance / color_id`，同一讨论内 `color_id` 两两不同，且**全部以 `locked=0` 落库**。
 - AC-1.4 WHEN 用户对尚未确认的讨论**再次**请求生成嘉宾 THEN THE SYSTEM SHALL 先删除该讨论全部 `locked=0` 的 `guests` 行（及其 `agent_status` 行）再写入新阵容；IF 该讨论已存在 `locked=1` 的嘉宾 THEN THE SYSTEM SHALL 返回 409 且 `guests` 行数不变（已确认的阵容不可覆盖）。
 - AC-1.5 IF 模型输出经 zod 二次校验仍不合法（缺字段 / 人数不符 / 色板外 / 颜色重复） THEN THE SYSTEM SHALL 重试 1 次；仍不合法则返回 422，且 `guests` 表该讨论的行数与调用前一致（不得留下半套阵容）。
 - AC-1.6 IF `process.env.DEEPSEEK_API_KEY` 缺失 THEN THE SYSTEM SHALL 返回 500 且 `error.code='LLM_NOT_CONFIGURED'`，不得返回任何伪造嘉宾。
 - AC-1.7 WHEN 用户确认阵容 THEN THE SYSTEM SHALL 在 1 个事务内：把该讨论全部 `guests.locked` 置 1、为每位嘉宾建一行 `agent_status(state='idle')`、**为每位嘉宾写入一条 `agent.status` 事件**（`updated_seq` 取该事件 seq，不得留 0）、把 `discussions.status` 置 `ready`。
 - AC-1.7b IF 该讨论 `guests` 行数 ≠ `expert_count + 1` THEN THE SYSTEM SHALL 拒绝确认并返回 409 `GUEST_COUNT_MISMATCH`。
 - AC-1.8 WHEN 用户对 `ready` 讨论发起开始 THEN THE SYSTEM SHALL 在 5s 内落库并推送 `run.started`，随后产出主持人开场 turn（`speech_type='opening'`）。
-- AC-1.9 WHILE 讨论处于 `running` THE SYSTEM SHALL 每次发言定稿时**同时**写入 `turns` 一行并推送 `turn.done`；`turn.delta` 只承载流式片段，不写库。
+- AC-1.9 WHILE 讨论处于 `running` THE SYSTEM SHALL 每次发言定稿时**同时**写入 `turns` 一行并推送 `turn.done`；`turn.delta` 只承载流式片段，不写库、**不带 `id`**、不参与 `seq` 去重与补发。断线期间的 delta 永久丢失，由重连后 `turn.done` 的 `content` 整体覆盖临时缓冲。
 - AC-1.10 IF 单条专家发言（`challenge / supplement / rebuttal / question`）超过 120 字 THEN THE SYSTEM SHALL 在最后一个句末标点处截断至 ≤120 字后入库，不重试。主持人 `opening / summary` 不受 120 字限制（上限 400 字），不截断。
 - AC-1.11 IF 账本点名的 `next_speaker` 不在 `locked=1` 的嘉宾名单内 THEN THE SYSTEM SHALL 在 1 次重试后降级为「最久未发言的专家」，并把该轮 `ledger.parse_status='fallback'`。
 - AC-1.12 WHEN 停摆计数达到 3 THEN THE SYSTEM SHALL 停止调度并进入总结阶段，不再产生新的专家 turn。
