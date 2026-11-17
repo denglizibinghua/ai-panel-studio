@@ -2,10 +2,14 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { healthResponseSchema } from '@ai-panel/shared';
 import { getDb, type Db } from './db';
 import { isLlmConfigured } from './llm/config';
+import type { ChatJsonClient } from './llm/client';
+import { guestRoutes } from './modules/guest/routes';
 
 export interface BuildAppOptions {
   /** Injected for tests; defaults to the shared process connection. */
   db?: Db;
+  /** Injected for tests; production builds a DeepSeek client per guest request. */
+  llm?: ChatJsonClient;
 }
 
 /**
@@ -33,6 +37,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       now: new Date().toISOString(),
     });
   });
+
+  app.register(guestRoutes({ llm: options.llm }), { db: () => options.db ?? getDb() });
 
   return app;
 }

@@ -113,6 +113,7 @@ export const ledgerDecisionSchema = z.enum(ledgerDecisionValues);
 
 export const llmModuleValues = ['guest', 'ledger', 'turn', 'summary'] as const;
 export const llmModuleSchema = z.enum(llmModuleValues);
+export type LlmModule = z.infer<typeof llmModuleSchema>;
 
 export const llmProviderValues = ['deepseek'] as const;
 export const llmProviderSchema = z.enum(llmProviderValues);
