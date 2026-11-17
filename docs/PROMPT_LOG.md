@@ -26,7 +26,7 @@
 - [x] S2 · 工程骨架与 seed — 阶段：SDD
 - [x] S3 · 嘉宾生成与锁定 — 阶段：SDD
 - [x] S4 · 主持人账本 — 阶段：TDD
-- [ ] S5 · 调度决策纯函数 — 阶段：TDD
+- [x] S5 · 调度决策纯函数 — 阶段：TDD
 - [ ] S6 · SSE 事件总线 — 阶段：TDD
 - [ ] S7 · 演播厅布局 — 阶段：DDD
 - [ ] S8 · 状态层接线 — 阶段：DDD
@@ -395,3 +395,96 @@ $ grep -E "fetch\(|process\.env|openai" server/src/modules/host/*.ts
 **教训**：**"测试全绿"只证明实现符合契约，不证明契约覆盖了需求。** 这已经是第二次撞上同一类问题 —— S2 是"模块没有 Session 认领"，S4 是"需求没有 AC 兜着"，症状不同、根因一样：**没人做"需求 → 验收标准"的完整性核对**。所以每个 Session 收尾要加一步机械检查：拿 F1–F7 / T1–T4 逐条问"这条现在由哪条 AC 兜着？"—— 没有 AC 的，就是没人做，无论测试多绿。
 
 ---
+
+### S5 · 调度决策纯函数
+
+**阶段**：TDD
+
+**核心 Prompt**：SESSION_MAP 的 S5 段原文（TDD：先贴 9 条红）。
+
+```
+已读 AGENTS.md。本次执行 S5：调度决策纯函数。允许改：
+server/src/modules/host/decide.ts, server/test/host/decide.test.ts
+
+第一步：只写测试，不写实现，9 条全红，把红色输出贴给我：
+1. 正常账本 → 返回 {action:'speak', guest_id, speech_type, instruction}
+2. next_speaker 不在名单 → 降级为最久未发言者
+3. is_request_satisfied=true → 返回 {action:'summarize'}
+4. 连续 3 次 is_in_loop → 返回 {action:'force_stop', reason:'loop'}
+5. 同一嘉宾连续发言 2 次 → 强制换人
+6. 已发言轮次达到上限 → {action:'summarize'}
+7. 嘉宾名单为空 → 抛明确错误，不返回 undefined
+8. 输入对象不可变：调用后原 transcript 数组长度不变
+9. 跨轮状态不外挂：input 里带 prev_stall_count，返回值里带 stall_count；
+   同一组输入调用两次必须得到完全相同的结果（含 stall_count）。
+
+第二步：实现 decide()，满足全部 9 条。
+硬约束：不得出现 Date.now / Math.random / fetch / 任何 db import / 任何 llm import。
+验收：先给 9 条失败的输出，再给全绿的输出。
+```
+
+**意图**：把"下一个谁说话"从模型手里收回成一条可测的规则链。模型只负责给建议（`LedgerOutcome`），真正的裁决在 `decide()`：名单空就炸、停摆 3 就停、满足了或到 20 条就收尾、同一个人不许连着说两次。这一层越纯，runner 越好写，回放越好查。
+
+**接口**（SESSION_MAP 未给签名，本轮定死）：
+
+```ts
+decide(input: DecideInput): DecideResult
+
+DecideInput = { ledger: LedgerOutcome; roster; transcript; expert_turn_count;
+                prev_stall_count; max_expert_turns? }
+DecideResult =
+  | { action:'speak'; guest_id; speech_type; instruction; stall_count }
+  | { action:'summarize'; reason:'request_satisfied' | 'max_turns'; stall_count }
+  | { action:'force_stop'; reason:'loop'; stall_count }
+```
+
+判定顺序（先命中先返回）：空名单抛 `DecideError('EMPTY_ROSTER')` → `prev_stall_count >= 3` force_stop → `is_request_satisfied` summarize → `expert_turn_count >= 20` summarize → speak。
+
+**实现决定**（需要留档）：
+
+1. **stall 只认一个来源**：S4 的 `computeStallDelta` 已经在更新计数，所以 S5 **不重算**，只把 `prev_stall_count` 原样带回 `stall_count`。runner 必须把本轮的 `ledger.stall_count` 当作 `prev_stall_count` 传进来，否则会丢掉这一轮 +1。
+2. **反轮流是硬约束，不靠模型自觉**：只要账本点名的人等于 transcript 最后一位发言人，就换成"最久未发言者"（并排除刚说完的人）。AC-1.21 的"`next_guest_id` 连续两次相同比例为 0"由此单步保证；全场的 speech_type 多样性仍要 runner 跑完才可证。
+3. **`speech_type` 兜底**：`LedgerOutcome.speech_type` 类型是整个 `SpeechType` 联合，但专家只能出 4 种短类型，所以 `opening/summary` 一律降成 `supplement`。
+4. **最久未发言的规则与 S4 fallback 同构**：没出现过的最优先，其次取上次出现最早的；平手按 roster 顺序。S5 允许改的文件不含 `ledger.ts`，所以这段 10 行选择器在 decide 内本地实现，并在注释里标明同构来源（下一轮若动 ledger，两处要一起改）。
+
+**验收（先红后绿）**：
+
+```
+# 第一步：只有骨架（decide() 抛 not implemented）
+× 9 条 → Test Files 1 failed / Tests 9 failed
+
+# 第二步：实现后
+$ pnpm -C server test -- decide
+✓ test/host/decide.test.ts (9 tests) 4ms
+Test Files 1 passed / Tests 9 passed
+
+$ pnpm check
+tsc --noEmit ×2 ✓ → 7 files / 51 tests passed
+
+$ grep -E "Date\.now|Math\.random|fetch|db|llm" server/src/modules/host/decide.ts
+（无输出）
+```
+
+**COVERAGE 核对（从本轮起固定动作）**：
+
+- 逐行看「验收标准」列：F1–F7 / T1–T4 全部有 AC，无空行。
+- 逐行 `Test-Path` 实现归属，**目录存在不算数，要数文件**：`discussion/`、`sse/`、`summary/`、`turn/`、`web/src/views/` 目前都是 0 文件，所以对应行仍是 ⏳/🟡，没有虚报。
+- F3 状态：`🟡 账本 + decide 已完成（单步降级/换人已锁）；runner + 追问待 S6.5`。
+- 无新增 AC，无需加行。
+
+**教训**：**"纯函数"的证明不是"函数体里没有 var"，而是"同一个输入两次，输出一个字节都不差"。** 第 9 条测试把 `prev_stall_count` 拉进来，才逼出真正的边界问题：状态到底由谁更新。答案是 S4 更新、S5 原样带回 —— 一旦 S5 自作聪明再算一次，同一个 `is_in_loop` 会被计两次，停摆会提前一轮触发，而所有单测仍然可能是绿的。
+
+**审查补记（独立复核，判定期）**：
+
+9 条测试全绿、纯度 grep 干净、判定顺序与 AC 对得上。但复核出一个**只会在 S6.5 才现形**的漏洞：
+
+> 反轮流用的是 `transcript[transcript.length - 1].guest_id` —— **"最后一条发言"，不是"最后一条专家发言"**。
+
+S5 的测试里 transcript 全由专家发言组成，所以这条永远成立。但 S6.5 一旦按 AC-1.25 每 4 条插一条主持人追问，transcript 的末尾就会是**主持人**（host id 不在 roster 里）。此时 `candidate.id === lastSpeakerId` 永远为假 → 反轮流静默失效 → 同一位专家可以连着说两次 → **AC-1.21（`next_guest_id` 连续相同比例为 0）在库里被违反，而 9 条单测照样全绿**。
+
+修法：倒序扫 transcript，取**第一条 guest_id ∈ roster** 的发言作为"上一发言人"。补一条回归测试：`transcript = [专家乙, 主持人追问]`、账本仍点名专家乙 → 必须换成专家甲。
+
+**这是本轮的第二次同类发现**：S4 是"需求没有 AC"，S5 是"约束依赖了一个未来才成立的前提"。共同点是 —— **它们都不是当前代码的错，而是"当前代码在下一阶段的输入下会错"**。所以从 S5 起，收尾多问一句：*这个实现有没有依赖"当前 transcript / 当前名单形态"的假设？下一阶段会不会打破它？*
+
+---
+

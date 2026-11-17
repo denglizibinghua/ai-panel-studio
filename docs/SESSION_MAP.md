@@ -411,6 +411,10 @@ B. 主循环（modules/turn/runner.ts）
    2. while (未结束 && !signal.aborted):
         a. 调 decide()（S5 的纯函数）拿 {action, guest_id, speech_type, instruction}
            —— 输入必须包含上一轮的 stall_count，并把它作为返回值传回（不要存在模块级变量里）
+           ⚠️ **stall 只有 S4 一个来源**：`requestLedger` 已经算过 `stall_count`，`decide` 只是原样带回。
+           所以 runner 必须把**本轮** `ledger.stall_count` 作为**下一轮**的 `prev_stall_count` 传进去。
+           传成上一轮的旧值 → 丢一轮 +1 → 停摆晚一轮才触发，而且所有单测照样全绿。
+           transcript 必须包含主持人 turn（开场 + 追问），`decide` 换人时只看最后一条**专家**发言。
         b. action='speak' → agent_status 置 preparing → 调模型拿 1–2 句 → speaking → 落 turns
            → turn.done → idle
         c. 每完成 2 条专家发言 → 调 summary/extract.ts 提炼，写 provisional 条目 + 事件
@@ -444,6 +448,8 @@ D. 主持人追问（modules/host/interject.ts）—— AC-1.25，F3 的"追问/
   - 每 2 条专家发言后 consensus_points 行数增加
   - **12 条专家发言后恰好出现 3 条 speech_type='question' 的 turn，且 guest 是 host**
     （4/8/12 各一次）；这些 turn 没有让 expert_turn_count 增加
+  - **stall 串联**：连续 3 轮 `is_in_loop=true` 的 fake 账本 → 第 3 轮就返回 force_stop
+    （不是第 4 轮）。这条专门抓"runner 把 stall 传断链"——传旧值的话前三轮测试全绿，只有这条会红
   - cancel 后 runner 停止，turns 行数不再增加，status=cancelled 且 error_code IS NULL
 验收：pnpm -C server test -- runner 全绿；并给我一段"curl 建讨论 → start → 等 30s → 查详情"
 的真实输出（status 应为 finished，turns 应有若干条，且能看到主持人追问穿插其中）。

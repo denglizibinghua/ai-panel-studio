@@ -7,13 +7,16 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S4` 已完成（ledger prompt + 解析 + 两级降级 + 停摆计数，9 条测试全绿；全仓 42 条）
-- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）
-- 下一步：S5 调度决策纯函数（`server/src/modules/host/decide.ts` + `server/test/host/decide.test.ts`）
+- 当前 Session：`S5` 已完成（`host/decide` 纯函数，10 条测试先红后绿；全仓 52 条）
+- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）、S5 调度决策（无时钟/随机/IO）
+- 下一步：S6 SSE 事件总线 + `guest/confirm.ts`（`server/src/modules/sse/**`）
 - 已知未决：S3 已真调验收（200/2359ms/500 tokens），**S4 的 ledger 尚未真调**（需手动打一次）；
+  **stall 计数只在 S4 更新，S5 原样带回**：runner 必须把本轮 `ledger.stall_count` 当 `prev_stall_count` 传入；
+  **decide 的 transcript 必须包含主持人 turn**，换人时只看最后一条**专家**发言（否则主持人插一句追问，同一位专家可连说两次）；
   `confirm` 留 S6；`requestLedger` 的传输错误直接上抛，`run.failed` 归 S6.5 runner；
   `LedgerContext.roster` 只传可发言专家（host 由调用方过滤）；
-  **F3 的"主持人追问"此前无归属** → 已补 AC-1.25，实现在 S6.5 的 `host/interject.ts`
+  **F3 的"主持人追问"** → AC-1.25，实现在 S6.5 的 `host/interject.ts`；
+  每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---
 

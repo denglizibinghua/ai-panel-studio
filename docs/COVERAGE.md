@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | **F1** | 首页列出讨论；可加入观察；可发起新讨论 | AC-1.1、AC-1.2（建讨论）、AC-1.24（取消）、AC-3.1、AC-3.2、AC-3.3、AC-3.4、AC-3.5、AC-3.6、AC-3.7、AC-3.8 | S6.5 `modules/discussion`（列表/详情/start/cancel）+ S7 `HomeView` | ⏳ S6.5 / S7 |
 | **F2** | 生成主持人 + 专家（姓名/职业/立场/专属色）；用户确认后进演播厅 | AC-1.3、AC-1.4、AC-1.5、AC-1.6、AC-1.7、AC-1.7b | S3 `modules/guest`（generate，locked=0）+ S6 `guest/confirm.ts`（locked=1） | 🟡 生成已完成；confirm 待 S6 |
-| **F3** | 主持开场 / 追问 / 串联 / 收尾；专家自主决定顺序（抢答·补充·反驳），每次 1–2 句，**不机械轮流** | AC-1.8（开场）、AC-1.9、AC-1.10（超长截断）、AC-1.11（降级）、AC-1.12（停摆收尾）、AC-1.21（反轮流）、**AC-1.25（追问）**、AC-1.13（收尾） | S4 `host/ledger`（调度）+ S5 `host/decide`（决策）+ S6.5 `turn/runner`（主循环）+ `host/interject`（追问） | 🟡 账本已完成；decide/runner/追问待 S5、S6.5 |
+| **F3** | 主持开场 / 追问 / 串联 / 收尾；专家自主决定顺序（抢答·补充·反驳），每次 1–2 句，**不机械轮流** | AC-1.8（开场）、AC-1.9、AC-1.10（超长截断）、AC-1.11（降级）、AC-1.12（停摆收尾）、AC-1.21（反轮流）、**AC-1.25（追问）**、AC-1.13（收尾） | S4 `host/ledger`（调度）+ S5 `host/decide`（决策）+ S6.5 `turn/runner`（主循环）+ `host/interject`（追问） | 🟡 账本 + decide 已完成（单步降级/换人已锁）；runner + 追问待 S6.5 |
 | **F4** | 专家状态小窗：待机 / 准备发言 / 发言中 + 当前关注点；**不展示 CoT** | AC-1.20、AC-1.23 | S6.5 runner 写 `agent_status` + S8 `ExpertCard` 渲染 | ⏳ S6.5 / S8 |
 | **F5** | 过程中**持续**提炼共识与分歧，实时更新，不等结束 | AC-1.18（过程）、AC-1.19（定稿） | S6.5 `summary/extract`（每 2 条）+ S9 `summary/merge`（收尾归并） | ⏳ S6.5 / S9 |
 | **F6** | transcript 显示姓名 + 职业 + 与专家一致的色块；**不显示"举手"等内部事件** | AC-1.22（色块）、AC-1.23（只渲染 turn.done） | S7 `TranscriptFeed` + S8 接线 | ⏳ S7 / S8 |
