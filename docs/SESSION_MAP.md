@@ -92,29 +92,32 @@ consensus_points / divergence_points / agent_status / llm_calls
   specs/001-panel/contracts/events.md
 输入：specs/001-panel/spec.md、specs/001-panel/data-model.md
 
-openapi.yaml 必须覆盖这 8 个端点，每个都要有成功响应 + 至少 1 个错误响应：
-  GET  /api/discussions
+openapi.yaml 必须覆盖这 9 个端点，每个都要有成功响应 + 至少 1 个错误响应，
+错误码与 spec.md §4.2 逐字一致：
+  GET  /api/discussions              （支持 ?active=1）
   POST /api/discussions
   GET  /api/discussions/{id}
   POST /api/discussions/{id}/guests/generate
   POST /api/discussions/{id}/guests/confirm
   POST /api/discussions/{id}/start
   POST /api/discussions/{id}/cancel
-  GET  /api/discussions/{id}/events        （text/event-stream）
+  GET  /api/discussions/{id}/events  （text/event-stream）
+  GET  /health
 
-events.md 定义 SSE 事件协议，分 6 个事件族，每个族列出所有 type 和 payload 字段：
-  state.*      讨论状态变化（draft/generating/ready/running/finished/failed）
-  run.*        一次开始/结束/失败
+events.md 定义 SSE 事件协议，7 个事件族，每个族列出所有 type + payload 字段
++ 触发时机 + 对应 AC 编号：
+  state.*      讨论状态变化（含 cancelled 终态）
+  run.*        run.started / run.finished / run.failed / run.cancelled（后两者不得共用 payload）
   agent.*      专家状态（idle/preparing/speaking）+ focus 文本
   turn.*       turn.started / turn.delta / turn.done
   consensus.*  共识项新增或更新
   divergence.* 分歧项新增或更新
 硬性要求写进文档：
-  1. id 字段 = 该讨论内的 seq（字符串化整数），每个持久事件都要带；心跳不带。
+  1. id 字段 = 该讨论内的 seq（字符串化整数），每个持久事件都要带；`: ping` 心跳不带。
   2. 断线补发语义是 exclusive：只补 seq > Last-Event-ID 的事件。
-  3. 心跳用注释帧 `: ping`，不推进序号。
-  4. 六族事件不得共用同一个 payload 结构；状态与 transcript 禁止混装。
-  5. 写明"前端不得依靠事件到达顺序推断业务顺序，一律以 seq 为准"。
+  3. 七族事件不得共用同一个 payload 结构；状态与 transcript 禁止混装（spec H1）。
+  4. 写明"前端不得依靠事件到达顺序推断业务顺序，一律以 seq 为准"（AC-2.9）。
+  5. **每个 type 后面标上它覆盖哪条 AC**；找不到 AC 的 type 就是过度设计，写清楚理由或删掉。
 
 做完只输出两个文件 + 你识别出的协议风险点（最多 3 条）。不要写实现。
 ```
