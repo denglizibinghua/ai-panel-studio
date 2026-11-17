@@ -21,7 +21,7 @@
 | S1 | 接口与事件协议 | SDD | spec + data-model | `contracts/openapi.yaml` + `events.md` | 人工检查清单 | 2h |
 | S2 | 工程骨架 + 迁移 + seed | SDD | data-model + contracts | 可跑的 Node 服务 + 9 张表 + 5 条样例 | `pnpm -C server test` | 3h |
 | S3 | 嘉宾生成与锁定 | SDD | `shared/schemas/guest.ts` | 生成接口 + 校验 + 幂等 | `pnpm -C server test -- guest` | 3h |
-| S4 | 主持人账本 | TDD 前置 | schema + contracts | ledger 提示词 + 解析 + 校验 + 停摆计数 | `pnpm -C server test -- ledger` | 3h |
+| S4 | 主持人账本 | TDD 前置 | events.md §7 + S3 校验风格 | ledger prompt + 解析 + 重试 + 停摆计数（`module='ledger'`） | `test -- ledger` + 审计归属断言 | 3h |
 | S5 | 调度决策纯函数 | TDD | ledger schema | 先红后绿的 `decide.ts` | `pnpm -C server test -- decide` | 2h |
 | S6 | SSE 事件总线 + confirm | TDD | contracts/events.md | 每讨论一条流 + 序号补发 + 清理 + `publishEphemeral` | 并发 curl + 补发测试 | 3h |
 | S6.5 | 讨论生命周期 + 主循环 | TDD | contracts + `decide` + `publish` | 5 个 REST 端点 + `runner.ts` + 增量提炼器 | `pnpm -C server test -- runner` | 4h |
@@ -204,68 +204,116 @@ server/src/modules/guest/**, server/src/llm/**, server/test/guest/**
 
 ## S4 · 主持人账本 ｜ TDD 前置
 
-> **这是全项目的心脏。** 用的是 AutoGen Magentic-One 的 progress ledger 模式：
+> **这是全项目的心脏。** 用 AutoGen Magentic-One 的 progress ledger 模式：
 > 每轮让模型吐一个 JSON 决策，同时拿到"下一个谁说话""说什么类型""要不要停"。
+>
+> **本轮结构与 S3 对齐**：S3 是「prompt + 校验 + 重试 + 落库」，S4 是「prompt + 校验 + 重试 + 返回账本」。
+> 照着 S3 的 `lineup.ts` / `generate.ts` 分工写，别另起一套。
 
-- **输入**：`shared/schemas/ledger.ts`、`contracts/events.md`
-- **允许改**：`server/src/modules/host/ledger.ts`、`server/src/modules/host/prompt.ts`、`shared/schemas/ledger.ts`、`server/test/host/ledger*`
-- **验收**：坏 JSON / 缺 reason / 点名不存在的嘉宾，三种情况都有明确降级
+- **输入**：`contracts/events.md` §7、`shared/schemas/ledger.ts`、`server/src/modules/guest/lineup.ts`（照它的校验风格写）
+- **允许改**：`server/src/modules/host/prompt.ts`（新建）、`server/src/modules/host/ledger.ts`（新建）、`shared/schemas/ledger.ts`、`server/test/host/ledger.test.ts`（新建）
+- **验收**：`pnpm -C server test -- ledger` 全绿；`llm_calls` 里出现 `module='ledger'` 的行
+
+### 三条硬边界（违反任意一条 = 本轮作废）
+
+1. **`module: 'ledger'` 必须由调用方显式传**。`llm.complete({ module: 'ledger', … })`。
+   上一轮 `client.ts` 把 module 写死成 `'guest'`，33 条测试全绿但审计表全错 —— 修好之后
+   **每个模块自己负责传对的 module**，client 不再兜底。
+2. **不许新建第二个 LLM client**。注入 `ChatJsonClient`（`server/src/llm/client.ts` 的类型），
+   不许 import 任何模型 SDK、不许写 `fetch(`、不许读 `process.env`。
+   自查：`grep -n "fetch(\|process.env\|openai" server/src/modules/host` 必须为空。
+3. **停摆计数必须是入参出参**。`prev_stall_count` 进、`stall_count` 出，函数内不许有
+   `let stall = 0` 这类模块级或闭包级状态；同一组输入调用两次必须得到完全相同的输出。
 
 ```
-已读 AGENTS.md。本次执行 S4：主持人账本。允许改：
-server/src/modules/host/ledger.ts, server/src/modules/host/prompt.ts,
-shared/schemas/ledger.ts, server/test/host/ledger.test.ts
-输入：specs/001-panel/contracts/events.md、shared/schemas/*.ts
+已读 AGENTS.md 与 server/src/modules/guest/lineup.ts。本次执行 S4：主持人账本。
+只允许新建/修改这四个文件：
+  server/src/modules/host/prompt.ts
+  server/src/modules/host/ledger.ts
+  shared/schemas/ledger.ts
+  server/test/host/ledger.test.ts
+不要碰：llm/client.ts、app.ts、guest/**、任何迁移与 seed。
 
-实现「progress ledger」：每一轮把「议题 + 已锁定嘉宾名单 + 最近 6 条发言」喂给模型，
-要求它输出严格 JSON，schema 如下（每项都要有 reason 和 answer）：
-{
-  "is_request_satisfied": {"reason": string, "answer": boolean},
-  "is_in_loop":           {"reason": string, "answer": boolean},
-  "is_progress_being_made":{"reason": string,"answer": boolean},
-  "next_speaker":         {"reason": string, "answer": "<嘉宾 name，必须来自名单>"},
-  "speech_type":          {"reason": string, "answer": "challenge|supplement|rebuttal|question|summary"},
-  "instruction":          {"reason": string, "answer": "<给这位嘉宾的一句具体指令>"}
+【硬边界，违反即作废】
+1. llm.complete 必须传 module: 'ledger'（类型是 shared 的 LlmModule）。
+2. 不得新建 LLM client、不得 import 模型 SDK、不得写 fetch(、不得读 process.env。
+3. stall_count 只能作为入参进、出参出；不得有模块级状态。
+
+【接口，按这个签名写】
+export interface LedgerContext {
+  discussion_id: number;
+  topic: string;
+  roster: { id: number; name: string; profession: string; stance: string }[];  // 只放 locked=1
+  recent_turns: { guest_id: number; speaker_name: string; speech_type: string; content: string }[];
+  expert_turn_count: number;   // 已发生的专家发言条数
+  prev_stall_count: number;    // 上一轮的停摆计数
 }
 
-prompt.ts 要求：
-- 嘉宾名单每轮重新拼进 system prompt（不要依赖历史记忆），并明确写
-  "你只能从这份名单里选人，名单外的人不存在"。
-- 明确写"每次发言 1–2 句，禁止长篇"。
-- 明确写"如果已有 3 位以上嘉宾表达过同一立场，就不要再让人重复该立场"。
+export interface LedgerOutcome {
+  parse_status: 'structured' | 'json_mode' | 'fallback';
+  is_request_satisfied: boolean;
+  is_in_loop: boolean;
+  is_progress_being_made: boolean;
+  next_guest_id: number | null;      // 已解析成 roster 里的 id；fallback 时是最久未发言者
+  next_speaker_name: string | null;  // 原始名字，供 ledger.raw_json 复盘
+  speech_type: SpeechType | null;    // fallback 时固定 'supplement'
+  instruction: string | null;
+  stall_count: number;               // 出参，0..3
+  raw: string;                       // 最后一次模型原文，供 ledger.raw_json
+  issues: string[];
+}
 
-ledger.ts 要求：
-- parseLedger(raw)：从可能带 markdown 围栏的输出里取出 JSON，失败返回 null。
-- validateLedger(obj, guestNames)：zod 校验 + 额外校验 next_speaker ∈ guestNames。
-- 三级降级：结构化输出 → json 模式 → 解析失败则返回 fallback（选最久未发言者，speech_type=supplement）。
-- 停摆计数：is_in_loop 或 !is_progress_being_made 各 +1，否则 -1（下限 0）；到 3 次返回 stop 信号。
-- **停摆计数的归属要说清**：本文件只负责「算这一次的增量」，**不持有跨轮状态**。
-  `computeStallDelta(ledger, prevStallCount) → nextStallCount` 这样签名，prev 作为入参、
-  next 作为出参；真正的持久化在 S6.5 的 runner 里（写 `ledger.stall_count`）。
-  S4 里出现任何 `let stall = 0` 这种模块级变量都算违约。
-- **AC-1.11「重试 1 次」与本文「三级降级」不矛盾，是两层**：
-  第一层 = 模型调用失败或输出不合法 → 重新请求 1 次（AC-1.11）；
-  第二层 = 两次都拿不到可用 JSON → 走 fallback（`parse_status='fallback'`）。
-  fallback **不算**第三次重试。文档里要把这两层分开写，别混成"重试三次"。
-- 这里只做纯解析与决策，不要发请求、不要写库。
+export async function requestLedger(
+  llm: ChatJsonClient,
+  ctx: LedgerContext,
+): Promise<LedgerOutcome>
 
-测试必须覆盖：正常 JSON / 带 ```json 围栏 / 缺 reason / next_speaker 不在名单 / 连续 3 次无进展。
-验收：pnpm -C server test -- ledger 全绿。
+【prompt.ts】
+- buildLedgerMessages(ctx)：拼 system + user。
+- buildLedgerRetryMessages(messages, issues)：在原消息后追加一段"上次哪里不合法"的反馈。
+- 嘉宾名单每轮重新拼进 system prompt，并写明"你只能从这份名单里选人，名单外的人不存在"。
+- 写明"每次发言 1–2 句""如果已有 3 位以上嘉宾表达过同一立场，不要再让人重复该立场"。
+- 要求纯 JSON、每项都有 reason 和 answer，字段名照 shared/schemas/ledger.ts。
+
+【ledger.ts】
+- parseLedger(raw)：剥掉 ```json 围栏后 JSON.parse，失败返回 null（不抛）。
+- validateLedger(obj, roster)：zod 校验 + 额外校验 next_speaker 必须 ∈ roster 的 name。
+- requestLedger 流程（严格两层，别搞成三层）：
+    第 1 次 → 通过 → parse_status = 'structured'
+    不通过 → 带 issue 路径重试 1 次（llm.complete({ isRetry: true })）→ 通过 → 'json_mode'
+    仍不通过 → fallback：parse_status = 'fallback'，next_guest_id = 最久未发言者，speech_type = 'supplement'
+  fallback 不是第三次重试。
+- computeStallDelta(is_in_loop, is_progress_being_made, prev)：
+    (is_in_loop || !is_progress) ? min(prev + 1, 3) : max(prev - 1, 0)
+- 本轮不写库、不发事件。持久化（ledger 表、agent_status、events）在 S6.5 的 runner。
+
+【测试，必须全部包含】
+1. 正常 JSON → parse_status='structured'，next_guest_id 正确
+2. 带 ```json 围栏 → 仍能解析
+3. 缺 reason → 触发重试，第二次通过 → parse_status='json_mode'
+4. next_speaker 不在 roster → 重试后仍非法 → fallback，且 next_guest_id = 最久未发言者
+5. 两次都非法 → fallback，speech_type='supplement'
+6. stall：连续 2 次无进展 → 2；第 3 次 → 3；再来一次仍封顶 3；有进展时 -1 且不低于 0
+7. 同一输入调用两次 → LedgerOutcome 完全一致（证明无状态）
+8. **审计归属**：跑完一次 requestLedger 后，llm_calls 对应行的 module === 'ledger'
+   —— 这是上一轮 module 写死的回归测试，必须有，别省
+
+验收：pnpm -C server test -- ledger 全绿，并贴出第 8 条测试的输出。
 ```
 
 ---
 
 ## S5 · 调度决策纯函数 ｜ TDD
 
-- **输入**：`ledger.ts` 的类型
+- **输入**：`server/src/modules/host/ledger.ts` 的 `LedgerOutcome` / `LedgerContext` 类型（S4 产出）
 - **允许改**：`server/src/modules/host/decide.ts`、`server/test/host/decide.test.ts`
-- **验收**：先贴 8 条红，再贴全绿；`decide.ts` 里 grep 不到 `Date.now` / `fetch` / `db`
+- **验收**：先贴 9 条红，再贴全绿；`decide.ts` 里 grep 不到 `Date.now` / `Math.random` / `fetch` / `db` / `llm`
 
 ```
 已读 AGENTS.md。本次执行 S5：调度决策纯函数。允许改：
 server/src/modules/host/decide.ts, server/test/host/decide.test.ts
 
-第一步：只写测试，不写实现，8 条全红，把红色输出贴给我：
+第一步：只写测试，不写实现，9 条全红，把红色输出贴给我：
 1. 正常账本 → 返回 {action:'speak', guest_id, speech_type, instruction}
 2. next_speaker 不在名单 → 降级为最久未发言者
 3. is_request_satisfied=true → 返回 {action:'summarize'}
@@ -274,10 +322,10 @@ server/src/modules/host/decide.ts, server/test/host/decide.test.ts
 6. 已发言轮次达到上限 → {action:'summarize'}
 7. 嘉宾名单为空 → 抛明确错误，不返回 undefined
 8. 输入对象不可变：调用后原 transcript 数组长度不变
-9. 跨轮状态不外挂：`decide(input)` 的 `input` 里带 `prevStallCount`，返回值里带 `nextStallCount`；
-   同一组输入调用两次必须得到完全相同的结果（含 nextStallCount），证明它没有藏状态
+9. 跨轮状态不外挂：`decide(input)` 的 `input` 里带 `prev_stall_count`，返回值里带 `stall_count`；
+   同一组输入调用两次必须得到完全相同的结果（含 stall_count），证明它没有藏状态
 
-第二步：实现 decide()，满足全部 8 条。
+第二步：实现 decide()，满足全部 9 条。
 硬约束：不得出现 Date.now / Math.random / fetch / 任何 db import / 任何 llm import。
 时间戳和随机源必须作为参数注入（测试才好写）。
 验收：先给我 8 条失败的输出，再给全绿的输出。
