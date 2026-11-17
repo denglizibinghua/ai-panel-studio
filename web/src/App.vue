@@ -1,9 +1,7 @@
 <script setup lang="ts">
-const title = 'AI Panel Studio';
+import { RouterView } from 'vue-router';
 </script>
 
 <template>
-  <main>
-    <h1>{{ title }}</h1>
-  </main>
+  <RouterView />
 </template>

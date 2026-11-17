@@ -25,13 +25,15 @@
 | S5 | 调度决策纯函数 | TDD | ledger schema | 先红后绿的 `decide.ts` | `pnpm -C server test -- decide` | 2h |
 | S6 | SSE 事件总线 + confirm | TDD | contracts/events.md | 每讨论一条流 + 序号补发 + 清理 + `publishEphemeral` | 并发 curl + 补发测试 | 3h |
 | S6.5 | 讨论生命周期 + 主循环 | TDD | contracts + `decide` + `publish` | 5 个 REST 端点 + `runner.ts` + 增量提炼 + **主持人追问** | `pnpm -C server test -- runner` | 5h |
-| S7 | 三页 + 演播厅布局 | DDD | DESIGN.md + 本节线框 | HomeView / GuestConfirmView / TheaterView | 9 张截图 + 一致性 6 问 | 4h |
+| S7 | 三页骨架（假数据） | DDD | DESIGN.md v1 + 本节线框 | HomeView / GuestConfirmView / TheaterView | 9 张截图 + 一致性 6 问 | 4h |
+| S7.5 | 设计系统重写 | DDD | awesome-design-md + 参考品牌 | 覆盖 DESIGN.md + 重写 tokens + 三页重排 | 9 张新截图 + 左边缘对齐 + grep | 3h |
 | S8 | 状态层接线 | DDD | S7 + events.md | fetch 流 → store → 五面板 | 真跑一场 | 3h |
 | S9 | 收尾与兜底 | TDD | 全部 | 自然语言总结 + 共识定稿 + 失败兜底 | 边界用例 | 2h |
 | S10 | E2E 闭环 | E2E | contracts | 一条完整 Playwright 用例 | `pnpm e2e` | 2h |
 | S11 | 文档与提交 | — | 全部 | Prompt 记录 / 工作说明 / README / 邮件 | 打勾清单 | 2h |
 
-**合计 ≈ 35h 的"AI 协作工时"，实际墙钟约 15–18h**，留足返工和睡觉。
+**合计 ≈ 36h 的"AI 协作工时"，实际墙钟约 16–18h**，留足返工和睡觉。
+（S0–S7 已完成；剩 S7.5 → S8 → S9 → S10 → S11）
 
 ---
 
@@ -595,9 +597,72 @@ ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
 
 ---
 
+## S7.5 · 设计系统重写（覆盖 DESIGN.md）｜ DDD
+
+> **为什么插在 S8 之前**：视觉语言要换，就必须在"接线"之前换完。
+> 否则 S8 会按旧 token 把三页接上一遍，S10.5 再按新 token 重排一遍 —— 同一批组件改两次。
+>
+> **这一轮会覆盖 `docs/DESIGN.md`**（用户已批准，不走 skill 默认的"只追加"），
+> 因为现有版本的问题不是缺内容，是**缺方向**：值层（token）成立，构图与层级没有主张。
+
+- **技能**：必须加载 `awesome-design-md`（`~/.agents/skills/awesome-design-md/SKILL.md`）
+- **参考品牌**：默认 `linear.app`；若它的产品界面部分不足以覆盖"演播厅"，允许改 `runwayml`
+- **输入**：现有 `docs/DESIGN.md`、`web/src/styles/tokens.css`、S7 的 9 张截图、`AGENTS.md` §6.11–13
+- **允许改**：`docs/DESIGN.md`（覆盖）、`web/src/styles/tokens.css`（**仅此一轮可改**）、`web/src/styles/atoms.css`、`web/src/views/**`、`web/src/components/**`
+- **禁止**：改 `stores/` `api/` `server/`；改交互流程；引外部字体/图片；新增基础件
+- **验收**：9 张新截图 + 三页左边缘对齐 + `grep "#[0-9a-fA-F]\{6\}" web/src/components` 为空 + `pnpm -C web build` 通过
+
+```
+已读 AGENTS.md、docs/DESIGN.md、SKILL.md（awesome-design-md）。
+本次执行 S7.5：用参考设计系统重写方向层，并把它落到三个页面上。
+
+第一步：按 skill 流程选型（只读一份参考，不许读多份）
+  - 读 index.md，在 linear.app / runwayml / theverge 中定一个（默认 linear.app）
+  - 只 Read 那一份 design-md/<slug>/DESIGN.md
+  - 不许把参考文件复制进项目、不许照搬品牌名/logo/专有字体
+
+第二步：覆盖 docs/DESIGN.md（这是本轮主交付物）
+  头部写：品牌代号（自起，例如 STAGE）、版本 v2.0 + 日期、参考源 design-md/<slug>
+  必须落这些字段：
+  1. 美术方向：一段话说清"这是什么感觉"，以及 3 条必须避免的 AI 套路
+  2. 色板：基底 / 表面 / 文字 / 语义 / **10 个专家色（保留现有语义，只允许微调亮度）**
+     规则：UI 强调色只有 1 个；专家色只用于语义标识（点、姓名、左侧竖条、描边），
+     **绝不与强调色出现在同一元素上**
+  3. 字号阶：至少 5 档，每档写死用途（现在 6 档只用 3 档，是"平"的主因之一）
+  4. 间距节奏：区分"组内 8/12"与"区块间 32/48"，明确哪层用哪个
+  5. 圆角 / 描边 / 阴影：三者只能选一种做层次，不许混用
+  6. 组件规则：按钮、卡片、面板头、输入、列表行、空态（每个给形态描述）
+  7. 页面宽度三档（阅读列 80rem / 表单 48rem / 工作区全宽）
+  8. Do's & Don'ts（至少 6 条 Don't，直指现在的问题）
+  9. 响应式断点（沿用 1600 / 1200 / 900）
+  10. 末尾"变更记录（日期）：覆盖旧版，参考 <slug>，理由是 X"
+
+第三步：改 tokens.css（**这是唯一允许改它的一轮**）
+  - 按新 DESIGN.md 重写字号阶、间距档、中性色阶；语义色保留
+  - 10 个专家色沿用 `--c-<id>-fg/-bg/-ring` 命名，不许改名（expert-colors.ts 依赖它）
+
+第四步：改三个页面（Home / GuestConfirm / Theater）
+  按新 DESIGN.md 重排，重点解决四个已知问题：
+  a. 三页内容宽度不一致（首页 1400 / 确认页 1056 / 演播厅 1440）→ 按 §页面宽度三档 统一
+  b. 首页卡片是"等高墙"、没有层级 → 进行中/已结束要能一眼分开
+  c. 首页完全没用专家色 → 每卡加前 4 位专家色点（复用 expertColorStyle）
+  d. 演播厅左右栏有死区 → 补空态与信息密度
+
+硬约束：
+  - 离线可用：不许引外部字体/图片；字体只能 Inter → PingFang SC → 微软雅黑 的栈
+  - 组件里不许出现 #hex / rgb()；间距只用 token
+  - 不许新增基础件；缺样式先改 atoms.css 或 DESIGN.md
+  - 只改视觉，不动任何交互与数据流
+
+验收：9 张截图（1440/1280/390 × 三页）+ 三页左边缘对齐说明 + grep 结果 + build 输出。
+```
+
+---
+
 ## S8 · 状态层接线 ｜ DDD
 
-- **输入**：S7 组件 + `contracts/events.md` + `docs/DESIGN.md`（新加的组件也必须用基础件与 token）
+- **输入**：S7 组件 + `contracts/events.md` + `docs/DESIGN.md` v2（**S7.5 之后样式已冻结**）
+- **注意**：S7.5 已经把视觉语言换过一轮，本轮只接线，**不许再新造视觉**
 - **允许改**：`web/src/stores/**`、`web/src/api/**`、`web/src/views/TheaterView.vue`
 - **验收**：真跑一场，五个面板都在动；页面 DOM 里搜不到 `"type":` 之类的 JSON 原文
 
@@ -723,6 +788,7 @@ e2e/**, playwright.config.ts, server/src/llm/fake.ts, server/src/llm/index.ts
 - [ ] **`docs/PRD.md`**（交付物原文明确要求 "PRD、ER 图等"，ER 已有，PRD 别漏）
 - [ ] `docs/TEST.md` 测试说明（跑什么、覆盖哪些 AC）
 - [ ] `README.md` 含：快速开始 / 环境变量（`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`PORT`）/ 技术选型理由 / API 列表 / 已完成 / 后续改进
+- [ ] **删掉 `?state=` QA 开关**，并重跑一遍截图（用 S7.5 之后那套视觉）
 - [ ] **模型名如实写**：实际服务模型是 `deepseek-flash`（`deepseek-chat` 已下线，Pro 档由 flash 承接），
       不要写成自己证不了的型号；`llm_calls` 里存的就是响应返回的真实 model，可直接当证据
 - [ ] `git log --oneline` 能看出层级。**约定 commit 前缀**：

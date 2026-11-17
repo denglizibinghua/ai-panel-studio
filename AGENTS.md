@@ -7,15 +7,26 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S6.5` 已完成（讨论 5 端点 + runner 主循环 + `summary/extract` + `host/interject`；新增 18 条 `test/discussion|runner`，全仓 89 条；真调 #11：`finished`、10 turns、7 条专家发言、1 次主持人追问、summary 231 字且与 summary turn 逐字相同）
+- 当前 Session：`S7` 已完成（HomeView / GuestConfirmView / TheaterView 三页 + 演播厅三栏壳，全部 mock；新增
+  `common/AppInput`、`common/AppStepper`（基础件，common 只新增）、`layout/PageShell`（布局壳）、
+  `home|guest|theater` 业务组件、`router/`、`mock/mock.ts`；`styles/**`、`api/`、`stores/`、`server/` 未动；
+  `pnpm -C web build` 绿；9 张主截图 + 7 张 `?state=` 状态截图，1440/1280/390 三档 `scrollHeight === innerHeight` 全 true）
 - 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）、S5 调度决策（无时钟/随机/IO）、S6 SSE 事件总线 + confirm、S6.5 讨论生命周期（create/list/detail/start/cancel、running 上限 3）+ 主循环（开场→decide→发言→每 2 条提炼→每 4 条追问→总结）+ 取消即停
-- 下一步：S7 三个页面 + 演播厅布局（全部假数据，加载 `impeccable`，落点仍是 `DESIGN.md` token）
-- 已知未决：S3 / S6.5 已真调（S6.5 的 `ledger` 有一次 invalid 输出走了 `is_retry=1` 重试，`turn` / `summary` 各有真实审计行）；
-  **`guests/generate` 仍未发 `state.generating` / `state.draft`** —— S6.5 声明范围不含该文件，需单独裁决补一个小 Session 或并入 S8；
-  单条发言失败会让 `turns.turn_no` 留空洞（正常路径不触发）；`ledger.turn_no` 已改为独立单调序号，连续失败不会撞 `uq_ledger_turn`；
-  summary 只硬保证 ≤400 与「失败兜底」，150–250 字目前靠 prompt 约束（S9 归并时收口）；
-  `requestLedger` 的传输错误直接上抛，runner 已承接 `run.failed`；`LedgerContext.roster` 只传可发言专家；
-  每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
+- 下一步：**S7.5 设计系统重写**（`awesome-design-md` + 参考品牌 → 覆盖 `docs/DESIGN.md` → 重写 `tokens.css` → 三页重排）。
+  **必须先于 S8**：视觉语言换完再接线，否则同一批组件要改两次。
+  S7 的 `?state=` 开关保留，S11 删除并重拍截图。
+- 已知未决：S7 的视觉被评为"一半 AI 风格"——值层（token）成立，但缺方向层（层级/比例/材质主张）。
+  S7.5 覆盖 DESIGN.md 时补上；`docs/DESIGN.md §8` 的三档页面宽度是 S7.5 的输入，不是终稿。
+- 已知未决：
+  - **响应式一律 CSS 驱动**。S7 实测：Playwright 视口仿真下 `matchMedia(...).addEventListener('change')` **不触发**（探针 0 次、`matches` 已为 true），JS 读视口会让 390px 下三块面板同时渲染。S8/S10 不得再引入 JS 视口判断
+  - S7 的 `?state=empty|loading|error|failed` 是纯前端 QA 开关（无请求），S8 接线后应改为真实 store 状态，别留在生产路径
+  - `web/src/mock/mock.ts` 是唯一假数据源，S10 E2E 仍可用；不要在组件里另造第二份样例
+  - `AppInput` / `AppStepper` / `PageShell` 是 S7 新增，已在 `docs/DESIGN.md` §7.1/§8 登记；业务组件仍只能拼基础件
+  - **`guests/generate` 仍未发 `state.generating` / `state.draft`** —— S6.5 声明范围不含该文件，需单独裁决补一个小 Session 或并入 S8
+  - 单条发言失败会让 `turns.turn_no` 留空洞（正常路径不触发）；`ledger.turn_no` 已改为独立单调序号，连续失败不会撞 `uq_ledger_turn`
+  - summary 只硬保证 ≤400 与「失败兜底」，150–250 字目前靠 prompt 约束（S9 归并时收口）
+  - `requestLedger` 的传输错误直接上抛，runner 已承接 `run.failed`；`LedgerContext.roster` 只传可发言专家
+  - 每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---
 

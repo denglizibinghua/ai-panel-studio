@@ -691,6 +691,47 @@ llm_calls: guest 1 / ledger 23(4 次重试) / turn 24 / summary 9 —— 四类�
 
 **教训**：**"测试通过"和"演示通过"是两件事。** 单测里每轮都是 100% 成功、0ms；真跑里每轮 3–7s、17% 概率输出不合法、一场 1–3 分钟。这轮所有真问题（时长、重号、解析失败率）单测都复现不了 —— 它们不存在于"逻辑是否正确"，只存在于"在真实概率分布下会发生什么"。所以每完成一个能跑起来的 Session，必须真跑一次，并把观测数字写下来；数字比"跑通了"值钱。
 
+---
+
+### S7 · 三个页面 + 演播厅布局（DDD）
+
+**阶段**：DDD
+
+**核心 Prompt**（三段式，原文要点）：
+1. 地基（单跑）：「只建 `router/`、`mock/mock.ts`、`layout/PageShell`，`App.vue`/`main.ts` 只负责挂路由；三个 view 先写占位。
+   mock 的导出名、字段、形状照我给的清单，一个不许改 —— 后面三个 agent 靠它并行。」
+2. 三页（并发）：「你只拥有 Home（/ 确认页 / 演播厅），文件互不重叠；业务组件只能用 AppButton/AppCard/AppBadge/AppPanel/AppEmpty 拼；
+   颜色只走 `expertColorStyle()`；容器自身的栅格用 `@media`、面板内部排布用 `@container`，**不许把 `container-type` 开在 `.studio` 自己身上**。」
+3. 审查修正：「跑 1440/1280/390 三档，断言 `scrollHeight === innerHeight`；390 下断言 roster/stage/insights 同时可见数 === 1；
+   断点不许读视口。」
+
+**意图**：先把壳做对（不滚页、三栏各自滚、专家色单一来源），S8 才有地方接真实数据。视觉品味交给 `impeccable`，
+但**落点必须是 token**：本轮零新增色值/字号/间距，唯一新增的组件（AppInput / AppStepper / PageShell）用的是现有 token。
+
+**卡点 1：并行 agent 的接口会打架。** 三个页面同时 import 同一份 mock，谁先写谁定形状，另两个必红。
+→ 先单跑一个地基 agent 把 `mock.ts` 的导出与字段冻结（含 `Turn`/`Guest` 的 strict 字段、ISO 毫秒时间戳、短发言 ≤120 字），再并发。
+
+**卡点 2（真翻车点）：`matchMedia` 在视口仿真下不触发。** 第一版演播厅用 `matchMedia('(max-width:900px)')` + `change` 监听驱动
+`isMobile`，代码读起来完全正确。实测：探针监听器触发 **0 次**，而 `matches` 已经是 `true` —— CSS 已经变单栏，
+JS 还以为自己是宽屏，于是 390px 下 **roster + transcript + insights 三块同时渲染，叠在同一个 grid 格里**。
+1440 的截图看不出任何异常，只有"把视口打到 390 再数可见面板"才露出来。
+
+**卡点 3：确认页在 1440 变成一条横带。** `auto-fill minmax(15rem,1fr)` 在 1440 排成 5 列、每列 ~266px，
+线框要的是 3 列。同时卡片内宽 233px < 15rem 触发容器查询，角色徽标全掉到姓名下面，1280 又不掉 —— 跨断点不一致。
+
+**修正**：
+- 断点全部改成 CSS：删掉 `matchMedia`/`isMobile`/`onMounted` 监听，改成 `.studio__roster--active` 之类的类 + `@media` 控制显隐；
+  抽屉块收进 `(min-width:901px) and (max-width:1200px)`，≤900 走内联三标签，遮罩在该区间外 `display:none`。
+- 确认页网格改 `minmax(19rem,1fr)` + `max-width: 66rem` 居中 → 1440/1280 都是 3+2，390 单列；卡片内宽 341px，徽标回到行内。
+- 复测（构建后的 dist）：390 每次只有一个面板 `display:flex`；三档 `scrollHeight === innerHeight` 全 `true`；无横向溢出。
+
+**验收数字**：`grep '#[0-9a-fA-F]{6}|rgb\(|hsl\('` → 空；`var(--…)` 用了 45 个，除 `--expert-fg/-bg/-ring`
+（由 `expertColorStyle()` 注入）外全部命中 `tokens.css`；`prefers-reduced-motion: reduce` 下呼吸动画
+`animation-duration: 1e-05s / iteration-count: 1`（全局规则生效）；9 张主截图 + 7 张 `?state=` 状态截图在 `D:\temp\s7-shots\`。
+
+**教训**：视觉轮的验收不能停在"截图好看"。这轮三个真问题（matchMedia 不触发、1440 横带、跨断点徽标翻转）
+**全都在 1440 的截图里看不出来**，全靠断言数字和换视口复测。以后每个响应式组件都要带一条"同时可见数"的断言。
+
 
 
 

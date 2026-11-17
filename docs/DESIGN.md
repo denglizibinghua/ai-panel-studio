@@ -167,6 +167,11 @@
 | `AppBadge` | `neutral` / `info` / `success` / `warn` / `danger` / `expert`，`dot` | 状态与标签 |
 | `AppPanel` | `title` + `actions` 插槽 + `scrollable` | 三栏的每一栏都用它 |
 | `AppEmpty` | `title` + `hint` + 默认插槽 | 空态 / 未开始 |
+| `AppInput` | `multiline`，`maxlength`，`label` | S7 新增：全站唯一文本输入（`atoms.css` 冻结期间样式留在 SFC 内，值仍全部来自 token） |
+| `AppStepper` | `min` / `max`，`label` | S7 新增：数字步进器（内置 `−` / `+` 用 `AppButton size="sm"`，不自绘按钮） |
+
+> 布局壳不在基础件之列：`components/layout/PageShell.vue` 只负责 `100dvh + overflow:hidden + 内部滚动`
+> 的页面框架（Home / GuestConfirm 使用；Theater 用 `.studio-shell` 二层壳）。它不产出任何视觉控件。
 
 ### 7.2 业务组件（S7 产出，必须用上面的基础件拼）
 
@@ -178,6 +183,15 @@
 ## 8. 布局
 
 - 壳：`height: 100dvh`（**不是 min-height**），`overflow: hidden`，页面永不滚动。
+- **页面宽度只有三档，不许各写各的**（S7 的教训：首页 1400 / 确认页 1056 / 演播厅 1440，看着像三个产品）：
+
+  | 类型 | 用在哪 | 规则 |
+  |---|---|---|
+  | 阅读列 | 首页列表、确认页卡片区 | 外壳 `max-width: var(--stage-max)` 居中，**内容列 `max-width: 80rem`（1280）居中**，行长 ≤ 80 中文字 |
+  | 工作区 | 演播厅三栏 | 占满外壳不设内容 max（三栏已经限制了行长），但左右 gutter 与阅读列一致 |
+  | 表单页 | 新建讨论 | 同阅读列，宽度取 48rem（768），不要撑满 |
+
+- 页面左右 gutter 统一 `--sp-5`；页头高度统一（当前 64px），不要一页 50 一页 64。
 - 演播厅三栏：`18rem / minmax(0,1fr) / 22rem`，间距 `--sp-4`。
 - 每个面板内部自己滚：`overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;`
 - 响应式：1200px 折叠右栏为抽屉；900px 单栏 + 顶部标签切换。
