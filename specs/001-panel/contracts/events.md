@@ -166,7 +166,7 @@ divergence.added  divergence.updated
 | type | `status` | `previous_status` 允许值 | 触发时机 | 覆盖 AC |
 |---|---|---|---|---|
 | `state.draft` | `draft` | `null`（创建）/ `generating`（生成成功回落） | `POST /api/discussions` 成功时（`seq=1`）；`generate` 成功后回落到待确认 | AC-1.1（创建即 draft）；AC-1.3 / AC-1.4（生成成功回到 draft） |
-| `state.generating` | `generating` | `draft` | `guests/generate` 开始调用模型时（瞬时态） | **无 AC 直接断言** —— 仅落地 spec §4.1 的 `generating` 瞬时态；评审若要求严格 AC 对齐可删，删除不影响任何 AC |
+| `state.generating` | `generating` | `draft` | **当前不发送**：`guests/generate` 是请求内同步完成的一次调用，结果直接走 HTTP 响应，没有观察者会盯着 draft 场看。保留该 type 以备将来改成异步生成 | **无 AC 直接断言**，且当前没有发射点 |
 | `state.ready` | `ready` | `draft` | `guests/confirm` 事务提交后（同一事务内还写 N 条 `agent.status`） | AC-1.7 |
 | `state.running` | `running` | `ready` | `start` 落库时；`run.started` 同刻发出 | AC-1.8 |
 | `state.finished` | `finished` | `running` | 收尾总结 turn 定稿后 | AC-1.12 / AC-1.13 / AC-1.14 / AC-1.15 |
@@ -283,6 +283,15 @@ data: {"guest_id":7,"state":"speaking","focus":"成本与体验的取舍"}
 
 触发：开始生成该条发言时（与 `agent.status(speaking)` 同一事务单元）。
 覆盖 AC：**AC-1.9**（发言开始信号）；约束面：AC-1.23（该帧不得生成 transcript 条目）。
+
+> **⚠️ `turn.started` 可能没有配对的 `turn.done`。** 发言生成失败（模型超时 / 空输出）时，
+> runner 只会把 `agent_status` 复位成 `idle` 并重试下一位，不会补 `turn.done`。
+> 而且 `turn_no` 取自 `MAX(turns.turn_no)+1`，失败的这次没有落行，所以**重试会用同一个 `turn_no`
+> 再发一次 `turn.started`** —— 同一 `turn_no` 出现两条 start、只有一条 done 是合法的。
+>
+> 客户端硬要求：**transcript 只渲染 `turn.done`**；`turn.started` 只用于「正在准备/正在说」的
+> 瞬时提示，且必须按 `(guest_id, turn_no)` 幂等处理（重复 start 覆盖而非追加）。
+> 服务端观测口径：`COUNT(turn.started) >= COUNT(turn.done)`，差值等于失败重试次数。
 
 ### 8.2 `turn.delta` —— **非持久，无 `id`**
 

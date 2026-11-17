@@ -619,6 +619,9 @@ ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
    - 五份互相独立的 state：status、agentStatusMap、turns、consensus、divergence
    - **不许合并成一个大对象**，这是作业的硬性隔离要求
    - turn.delta 追加到当前 turn 的缓冲，turn.done 才落进 turns 数组
+   - **turn.started 只用于「正在说」的瞬时提示**，按 `(guest_id, turn_no)` 幂等覆盖，
+     不得追加成条目。服务端允许 start 多于 done（发言失败会重试并复用同一 turn_no），
+     前端必须容忍孤儿 start —— 见 `events.md` §8.1 的警告。
    - 按 seq 去重（收到 seq <= 已处理最大值就丢弃；无 id 的 delta 不参与去重）
 4. 组件只从 store 读，不直接调 api。
 
@@ -651,19 +654,25 @@ server/test/summary/**
    写两条且必须在同一事务里：
    - `turns(speech_type='summary')` 一行
    - `discussions.summary_text` 逐字等于上一条的 content（INV-9）
-2. 共识/分歧定稿：把 status='provisional' 的条目做一次归并去重，
+   **长度要硬校验，不能只靠 prompt**：S6.5 真跑时 231 字合格，但这只是运气。
+   落库前检查 150 ≤ len ≤ 250；不在范围内就重试一次，仍不合法则截断/补齐到边界并记
+   `llm_calls(is_retry=1, success=0)`，**不允许**把 88 字或 600 字的"总结"直接写进库。
+2. **`support_guest_ids` 必须填**：S6.5 的 extract 目前写空数组，而 F5 的"谁同意"要靠它渲染。
+   本轮把提炼产出里的嘉宾姓名映射回 `guests.id` 再落库；映射不到的名字直接丢弃（不要猜）。
+   归并时同样要保留/合并 support 列表，不能因为置 final 就清空。
+3. 共识/分歧定稿：把 status='provisional' 的条目做一次归并去重，
    保留的置 'final' 并记录 updated_seq；被推翻的置 'dropped'（单向，不得复活）。
-3. 兜底：
+4. 兜底：
    - transcript 为空 → 总结写入固定文案「本场讨论未产生有效发言」，status 仍为 finished
    - 全部专家调用失败 → status='failed' + run.failed，前端显示重试按钮
    - 总结调用超时（>30s）→ summary_text 写「总结生成失败，请查看完整记录」，仍置 finished，
      run.finished.summary_failed=true
-4. **补一个重试端点**（原计划漏了，S9 的"重试按钮"没有后端就无法闭环）：
+5. **补一个重试端点**（原计划漏了，S9 的"重试按钮"没有后端就无法闭环）：
    POST /api/discussions/:id/retry-summary
    仅 status='failed' 且 error_code='ALL_SPEAKERS_FAILED' 允许；成功后 status 置 finished
    （或 failed→finished 的补充迁移），写 run.finished；其他状态返回 409 INVALID_STATE_TRANSITION。
    同时在 spec §4.1 状态机补这条迁移（改文档走 Ask first）。
-5. 前端 SummaryPanel：loading / success / failed 三态，failed 时可重试（调上面的端点）。
+6. 前端 SummaryPanel：loading / success / failed 三态，failed 时可重试（调上面的端点）。
 
 测试：三种兜底各一条 + retry-summary 的前置条件一条，空 transcript 那条必须**先红后绿**。
 验收：pnpm -C server test -- summary 全绿。
@@ -694,6 +703,8 @@ e2e/**, playwright.config.ts, server/src/llm/fake.ts, server/src/llm/index.ts
 9. 全流程截图存 e2e/screenshots/
 
 约束：模型调用必须走可切换的 fake provider（环境变量 FAKE_LLM=1），否则 E2E 不稳定。
+**真调一场要 1–3 分钟**（20 条专家发言 × 每轮 3–7s，再加账本/提炼/追问），
+所以 E2E 一律 fake，且如果把真调写进用例，超时必须 ≥ 180s，不能沿用 Playwright 默认 30s。
 **本轮允许改 server/src/llm/ 下的文件**（原计划只允许 e2e/**，自相矛盾，已修正）：
 新增 fake.ts 实现一个确定性的假 provider（固定返回合法 JSON / 固定文本，可注入延迟），
 在 index.ts 里按 FAKE_LLM 选择实现。**不得改动任何业务模块。**

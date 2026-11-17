@@ -7,18 +7,14 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S6` 已完成（SSE 总线 + `guest/confirm`，19 条 `test/sse/**` 新增；全仓 71 条）
-- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）、S5 调度决策（无时钟/随机/IO）、S6 SSE 事件总线（按 discussion 隔离、补发 exclusive、心跳清理、`publishEphemeral` 白名单）+ confirm（单事务锁定、逐人 `agent_status`/`agent.status`、`updated_seq` 取事件 seq）
-- 下一步：S6.5 讨论生命周期 + 主循环（`modules/discussion/**`、`turn/runner.ts`、`summary/extract.ts`、`host/interject.ts`）
-- 已知未决：S3 已真调验收（200/2359ms/500 tokens），**S4 的 ledger 尚未真调**（需手动打一次）；
-  **stall 计数只在 S4 更新，S5 原样带回**：runner 必须把本轮 `ledger.stall_count` 当 `prev_stall_count` 传入；
-  **decide 的 transcript 必须包含主持人 turn**，换人时只看最后一条**专家**发言（否则主持人插一句追问，同一位专家可连说两次）；
-  `requestLedger` 的传输错误直接上抛，`run.failed` 归 S6.5 runner；
-  `LedgerContext.roster` 只传可发言专家（host 由调用方过滤）；
-  **F3 的"主持人追问"** → AC-1.25，实现在 S6.5 的 `host/interject.ts`；
-  **S6 新约束**：`events` 唯一运行时写点仍是 `sse/publish.ts`；`turn.delta` 走 `publish()` 会抛 `TURN_DELTA_NOT_PERSISTED`，
-  只能走 `publishEphemeral()`；`confirm` 在自身事务内复用 `appendEventInTx`，提交后才 `broadcast`；
-  SSE 路由目前只在 `buildApp` 注册，S6.5 增加 `POST /api/discussions/:id/start` 时不要重复建总线；**`publish()` 在已有事务内会抛 `PUBLISH_INSIDE_TRANSACTION`**，runner 的"一笔发言"必须按 confirm 的模式用 `appendEventInTx` + 提交后 `broadcast`；总线在 `preClose` 结束所有 SSE 响应，别改回 `onClose`（会让 Ctrl+C 挂住）；**`guests/generate` 尚未发 `state.generating` / `state.draft`**（S6 只做总线 + confirm），S6.5 接线时补；
+- 当前 Session：`S6.5` 已完成（讨论 5 端点 + runner 主循环 + `summary/extract` + `host/interject`；新增 18 条 `test/discussion|runner`，全仓 89 条；真调 #11：`finished`、10 turns、7 条专家发言、1 次主持人追问、summary 231 字且与 summary turn 逐字相同）
+- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）、S5 调度决策（无时钟/随机/IO）、S6 SSE 事件总线 + confirm、S6.5 讨论生命周期（create/list/detail/start/cancel、running 上限 3）+ 主循环（开场→decide→发言→每 2 条提炼→每 4 条追问→总结）+ 取消即停
+- 下一步：S7 三个页面 + 演播厅布局（全部假数据，加载 `impeccable`，落点仍是 `DESIGN.md` token）
+- 已知未决：S3 / S6.5 已真调（S6.5 的 `ledger` 有一次 invalid 输出走了 `is_retry=1` 重试，`turn` / `summary` 各有真实审计行）；
+  **`guests/generate` 仍未发 `state.generating` / `state.draft`** —— S6.5 声明范围不含该文件，需单独裁决补一个小 Session 或并入 S8；
+  单条发言失败会让 `turns.turn_no` 留空洞（正常路径不触发）；`ledger.turn_no` 已改为独立单调序号，连续失败不会撞 `uq_ledger_turn`；
+  summary 只硬保证 ≤400 与「失败兜底」，150–250 字目前靠 prompt 约束（S9 归并时收口）；
+  `requestLedger` 的传输错误直接上抛，runner 已承接 `run.failed`；`LedgerContext.roster` 只传可发言专家；
   每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---

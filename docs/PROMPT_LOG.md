@@ -582,5 +582,116 @@ tsc --noEmit ×2 ✓ → 10 files / 71 tests passed（S5 结束时 52 条）
 
 ---
 
+## S6.5 · 讨论生命周期 + 主循环（2026-11-17）
+
+**提示词（摘要）**：按 `docs/SESSION_MAP.md` S6.5 执行，允许改 `modules/discussion/**`、`turn/runner.ts`、`summary/extract.ts`、`host/interject.ts`、`test/discussion/**`、`test/runner/**`。A 五个 REST 端点；B 开场→循环→收尾；C 每 2 条提炼；D 每 4 条主持人追问。验收：`pnpm -C server test -- runner` 全绿 + 真实 HTTP 跑完一整场。
+
+**意图**：把 S4/S5 的"单步决策"接成一条真正会推进的讨论，同时守住三条最容易在下一轮被破坏的边界：`publish()` 不进事务、stall 必须逐轮串联、主持人 turn 必须进 transcript 但不能算专家发言。
+
+**实现决定**：
+
+1. **状态唯一写点**：`discussion/status.ts` 的 `transitionInTx` 同时改行 + 追加 `state.*`，非法迁移直接抛 `INVALID_STATE_TRANSITION`。REST 读状态也走 `loadDiscussionStatus`，满足 H8。
+2. **一笔发言 = 两个事务单元**：`turn.started + agent_status(preparing)` 在调模型前提交；`turns + speaking + turn.done + idle` 在模型返回后提交。两次都只 `appendEventInTx`，提交后 `broadcast`，**没有任何 `publish()` 调用**（runner / extract 里 grep 只剩注释）。
+3. **stall 串联**：`requestLedger` 收 `prevStall`；`decide` 收 `outcome.stall_count`；下一轮 `prevStall = outcome.stall_count`。第三轮 ledger 返回 3 → 同轮 `force_stop`，`run.finished.reason='stalled'`，专家发言停在 2 条。
+4. **追问不污染计数**：专家数用 `turns JOIN guests role='expert'` 统计；host question 只增 `turn_no`，不增 `expert_turn_count`，也不进提炼窗口。12 条专家 → 恰好 3 条 question，guest 全是 host。
+5. **提炼**：每次窗口只看最近 4 条发言；`INSERT ... ON CONFLICT DO NOTHING` 靠 `uq_*_text` 去重；先 insert 点、再 append 事件、再把 `updated_seq` 回填为事件 seq。模型输出不合法返回空数组（跳过窗口，不阻塞调度）。
+6. **取消**：`cancel` 先提交 `cancelled + run.cancelled`（`error_code` 恒 NULL），再 abort；runner 每次写之前看 signal，写事务里再看 `status='running'`。测试在 runner 进行中取消，turns 计数冻结、无 `state.finished`。
+7. **start 的 500**：按 openapi 补了"无注入 client 且 key 缺失 → 500 `LLM_NOT_CONFIGURED`"的前置判断，避免先置 running 再异步失败。
+
+**验收（测试）**：
+
+```
+$ pnpm -C server test -- runner
+✓ test/runner/runner.test.ts (8 tests)
+$ pnpm -C server test -- discussion
+✓ test/discussion/lifecycle.test.ts (9 tests)
+$ pnpm check
+Test Files  12 passed / Tests  89 passed      （S6 结束时 71 条）
+tsc --noEmit ×2 ✓
+```
+
+**验收（真实 HTTP，#11，expert_count=2）**：
+
+```
+POST /api/discussions        -> 201 draft, last_event_seq=1
+POST /guests/generate        -> 1 host + 2 experts, locked=false
+POST /guests/confirm         -> ready, 3 guests
+POST /start                  -> 200 running, started_at=11:54:08.735Z
+（约 56s 后）
+GET  /api/discussions/11     -> status=finished, last_event_seq=72, summary_len=231
+                                 summary_text 与 speech_type='summary' 的 turn 逐字相同
+turns=10：opening 1 / challenge 3 / rebuttal 4 / question 1 / summary 1
+专家发言 7 条，主持人追问 1 条（turn_no=6），专家顺序 57,58,57,58,57,58,57（无连续同一人）
+ledger=8 行：7 speak + 1 summarize，stall 全 0；其中 1 次模型输出不合法 → is_retry=1 后成功
+llm_calls：guest 1 / ledger 9 / turn 9 / summary 4（提炼 3 窗口 + 收尾 1）
+events：consensus.added 7、divergence.added 6、turn.done 10、agent.status 33
+```
+
+**六条盯梢逐条对应**：
+
+| 要求 | 落点 / 证据 |
+|---|---|
+| publish() 不进事务，用 appendEventInTx + 提交后 broadcast | `runner.ts` 的 `commitAndBroadcast`；grep 新代码无 `publish(` 调用；取消测试中途写入不炸 |
+| stall 本轮值 → 下轮 prev，传旧值只有专门测试会红 | `runner.test.ts` stall 用例：ledger 3 行、stall 1/2/3、第 3 行 `force_stop` |
+| decide transcript 含主持人 turn，换人只看最后一条专家 | `ledger` prompt 断言含开场白/追问；12 条用例断言专家序列无相邻重复 |
+| 每 4 条专家插 host question，不计 expert_turn_count | 12 条用例：3 条 question + `run.finished.expert_turn_count=12` |
+| confirm 之后才能 start；running 超 3 场 409 | draft start → 409 `INVALID_STATE_TRANSITION`；3 running 后 → 409 `TOO_MANY_RUNNING` |
+| llm_calls 断言 `turn` 与 `summary`（不只 guest） | 完整场用例按 module 分组断言 ledger/turn/summary 均 > 0；真调同样三类都有 |
+
+**COVERAGE 核对**：F1 → 🟡（REST 完成，S7 页面待做）；F3 → ✅（服务端闭环）；F4 → 🟡（runner 写 `agent_status`，S8 渲染）；F5 → 🟡（extract 完成，S9 归并）；F7 → 🟡（summary 已产，S9 归并 / S8 渲染）。
+
+**遗留 / 边界说明**：
+
+1. `guests/generate` 仍未发 `state.generating` / `state.draft`。§0 原本写"S6.5 接线时补"，但 S6.5 的允许改清单不含该文件，按纪律**没动**，需要单独裁决（补一个小 Session 或并入 S8）。
+2. 单条发言失败会让 `turns.turn_no` 留空洞（`turn.started` 已取号、`turns` 未插入）。唯一索引允许，正常路径不触发；`ledger.turn_no` 已改成独立单调序号（`MAX(turns, ledger)+1`），连续失败不会撞 `uq_ledger_turn`。若要求 `turns.turn_no` 严格连号，需要在失败时补写占位行或改成"定稿时才取号"（后者与 `turn.started` 的契约冲突）。
+3. summary 只硬保证 ≤400 与失败兜底文案；150–250 字目前靠 prompt。真调这次是 231 字，符合，但没有代码层校验。
+4. 提炼的 `support_guest_ids` 暂写空数组：SESSION_MAP 的 `extractPoints` 返回 `string[]`，没给支持者映射；前端要"谁同意"需 S9 再补。
+
+**Oracle 独立复核（已修）**：
+
+复核确认六条底线全部成立，但抓出一处会把整场讨论误判为 `failed` 的链路，以及三个契约偏差：
+
+1. **（major，已修）连续两次发言失败会撞 `uq_ledger_turn`**：`recordLedger` 原用 `MAX(turns.turn_no)`，失败时不产生 `turns` 行，下一次决策算出同一个号 → `SQLITE_CONSTRAINT` 逃出主循环 → 整场 `failed`，而 spec §4.3 要求单条失败只降级。改成 `Math.max(MAX(turns), MAX(ledger)+1)`，并加"前两次专家发言都失败、随后恢复"的用例（3 位专家，避免同时触发 AC-1.16）。
+2. **（已修）start 的 500 抢在 404/409 前面**：key 缺失时，不存在的 id 会返回 500 而不是 404，非 ready 会返回 500 而不是 409。路由改为先做只读 preflight（404 / 409），再判 `isLlmConfigured()`；新增"无 key 时 404/409 优先、ready 才 500"的测试。
+3. **（已修）`agent.status.focus` 恒为 null**：AC-1.20 要 ≤80 字公开关注点，F4 小窗没东西可渲染。专家发言用 `decision.instruction` 截 80 字填入，追问/总结用固定短语。
+4. **（已修）running 但阵容缺失会永久占位**：`loadRunnerState` 返回 null 时原来直接 `skipped`，行停在 `running`，永久吃掉 3 场并发额度之一。现在只要行仍是 `running` 就置 `failed`。
+
+另补三条失败路径测试（AC-1.15 空 transcript、AC-1.16 全部专家失败、§4.3 总结失败兜底），全仓从 84 → **89** 条。
+
+**未改的一条**：非 `LlmError` 的内部异常仍落 `LLM_UPSTREAM_ERROR`。`error_code` 是封闭三值枚举（DB CHECK 只有 `LLM_NOT_CONFIGURED / LLM_UPSTREAM_ERROR / ALL_SPEAKERS_FAILED`），没有 `INTERNAL` 可表达；改成 `ALL_SPEAKERS_FAILED` 同样误导用户，故保留现状并在日志里大声打 `[runner]`。
+
+**审查补记（独立真跑，判定期）**：
+
+我没有只看报告，自己起了一个真实端口跑了一整场（2 位专家、真实 DeepSeek），并全程挂着 SSE 收帧：
+
+```
+create 201 → generate 200(3 guests) → confirm 200(ready) → start 200
+SSE: 200 text/event-stream，id 存在，caught_up 到达
+frames: agent.status 74 / turn.started 24 / turn.done 23 / consensus.added 22
+        divergence.added 15 / state.draft|ready|running 各 1 / run.started 1
+turns 23 条：turn 6、11、16、21 是主持人追问 → 节奏精确（每 4 条专家发言一次）
+专家 A/B 严格交替（60,61,60,61…），主持人插话没有打断换人规则
+llm_calls: guest 1 / ledger 23(4 次重试) / turn 24 / summary 9 —— 四类都真实落行
+```
+
+**三个只有真跑才会露出来的事实**：
+
+1. **时长是 1–3 分钟，不是 56 秒。** 我这场跑到 150s 时已有 18 条专家发言、仍未收敛。他报的 56s 是"8 条发言就 `is_request_satisfied`"的幸运局。真实分布取决于模型何时觉得"够了"。→ E2E 必须走 fake；若有人把真调写进用例，超时至少 180s（已写进 S10）。
+2. **`turn.started` 比 `turn.done` 多 1 条。** 一次 `empty speech` 失败后重试，而 `turn_no` 取 `MAX(turns)+1`、失败没落行，于是**同一个 turn_no 发了两条 start、只有一条 done**。他遗留里写的"turn_no 会留空洞"正好说反了 —— 不是空洞，是**重号**。已把这条写进 `events.md` §8.1（服务端观测口径 + 客户端必须按 `(guest_id, turn_no)` 幂等、transcript 只认 `turn.done`），并同步进 S8。
+3. **`ledger` 的 JSON 有 4/23 解析失败（invalid_json），重试后全部成功。** 也就是说 `parse_status='json_mode'` 在真实环境里约占 17%，不是理论分支。降级链确实在工作，但"只输出纯 JSON"这条 prompt 约束不够硬（大概率是字符串里带了裸换行）。→ 记入质量待办；S9 收口时应顺手加一次 parse 容错。
+
+**四处遗留的裁决**：
+
+| 遗留 | 裁决 |
+|---|---|
+| `generate` 不发 `state.generating` / `state.draft` | **不加**。没有观察者会盯着一个 draft 场；造一条没有真实状态迁移的 `generating` 事件，等于让事件流说谎。已在 `events.md` §5 把该 type 标为"当前不发送，保留备用"，AC-3.2 的 `generating` 分支随之是死分支，可接受 |
+| `turn_no` 空洞 | 见上：实为**重号**，不是空洞。已写成契约 + 客户端幂等要求，不改代码 |
+| `summary` 150–250 只靠 prompt | **S9 硬校验**（已写进 S9 prompt：超范围重试一次，仍不合法则夹到边界并记 `success=0`） |
+| `support_guest_ids` 空数组 | **S9 必须补**（已写进 S9 prompt：姓名映射回 `guests.id`，映射不到就丢弃，归并时保留） |
+
+**教训**：**"测试通过"和"演示通过"是两件事。** 单测里每轮都是 100% 成功、0ms；真跑里每轮 3–7s、17% 概率输出不合法、一场 1–3 分钟。这轮所有真问题（时长、重号、解析失败率）单测都复现不了 —— 它们不存在于"逻辑是否正确"，只存在于"在真实概率分布下会发生什么"。所以每完成一个能跑起来的 Session，必须真跑一次，并把观测数字写下来；数字比"跑通了"值钱。
+
+
+
 
 
