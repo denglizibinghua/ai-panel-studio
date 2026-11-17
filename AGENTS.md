@@ -7,10 +7,10 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S0`
-- 已完成：—
-- 下一步：契约冻结 → `specs/001-panel/spec.md` + `data-model.md`
-- 已知未决：LLM 供应商凭据尚未配置（不影响 S0–S2）
+- 当前 Session：`S3`（S0/S1 已冻结；S2 已完成：9 张表 + 迁移 + seed + zod + 20 个测试全绿）
+- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层
+- 下一步：S3 嘉宾生成与锁定（`server/src/modules/guest/**`）
+- 已知未决：LLM 凭据未配置（`/health` 会返回 `llm: "missing"`，不影响 S3 的 fake 测试；真调模型前需配）
 
 ---
 
@@ -64,28 +64,33 @@
 | 包管理 | pnpm workspace |
 | 模型 | DeepSeek（OpenAI 兼容接口），Key 只从 `process.env.DEEPSEEK_API_KEY` 读 |
 
+**已预批准的前端依赖**（`pnpm add` 时不必再问，除此之外仍走 Ask first）：
+`pinia`、`vue-router`、`tailwindcss` v4 + `@tailwindcss/vite`、`@playwright/test`。
+**S7 必须加载 `impeccable` 技能**再做视觉，否则产出会是"后台表单"而不是"演播厅"。
+
 ---
 
 ## 5. 目录地图
 
 ```
 server/src/
-  db/           连接、迁移、seed
+  db/           连接、迁移、seed（seed 与迁移是 events 表的唯一合法直写例外）
+  llm/          模型调用唯一出口 + config.ts（唯一读 Key 的地方）
   modules/
-    discussion/ 讨论 CRUD 与生命周期
-    guest/      嘉宾生成与锁定
-    host/       主持人账本与调度决策        ← 核心
-    turn/       发言生成与写入
-    summary/    结束总结、共识 / 分歧
-    sse/        事件总线、订阅、断线补发
-  llm/          唯一的模型调用出口
-shared/schemas/ zod：Guest / Turn / Event / Ledger / Consensus
+    discussion/ 讨论 CRUD、start/cancel、状态计算（status.ts）
+    guest/      嘉宾生成（generate）与锁定（confirm）
+    host/       主持人账本（ledger、prompt）与调度决策（decide）  ← 核心
+    turn/       发言生成 + runner.ts（开场→循环→收尾的主循环）
+    summary/    增量提炼（extract）+ 结束总结（summary）+ 归并（merge）
+    sse/        事件总线、订阅、断线补发、publishEphemeral
+shared/schemas/ zod：Guest / Turn / Event / Ledger / Consensus / Health
 web/src/
-  views/        HomeView、TheaterView
+  views/        HomeView、GuestConfirmView、TheaterView
   components/   theater/*、guest/*、common/*
-  stores/       discussion.ts（唯一状态源）
-  api/          fetch 封装 + EventSource 封装
-tests/          单元与集成
+  stores/       discussion.ts（五份独立 state，不得合并）
+  api/          client.ts + events.ts（fetch + ReadableStream，不用 EventSource）
+  mock/         S7 的假数据
+tests/          单元与集成（guest / host / sse / discussion / runner / summary）
 e2e/            Playwright
 specs/001-panel/
 ```

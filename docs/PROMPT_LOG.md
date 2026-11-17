@@ -23,7 +23,7 @@
 
 - [x] S0 · 契约冻结 — 阶段：SDD
 - [x] S1 · 接口与事件协议 — 阶段：SDD
-- [ ] S2 · 工程骨架与 seed — 阶段：SDD
+- [x] S2 · 工程骨架与 seed — 阶段：SDD
 - [ ] S3 · 嘉宾生成与锁定 — 阶段：SDD
 - [ ] S4 · 主持人账本 — 阶段：TDD
 - [ ] S5 · 调度决策纯函数 — 阶段：TDD
@@ -154,5 +154,54 @@ events.md 定义 SSE 协议，每个族列出所有 type + payload 字段 + 触�
 - **/health**：改成**永远 200**，body 自述 `{status, db, llm, now}`，`llm=missing` 是配置状态不是故障；业务请求的 Key 缺失仍走 AC-1.6 的 500。同时把 S2 的验收断言从"返回 ok"改成完整 body 形状。
 
 **教训**：AI 提出的"风险点"要分开看 —— 有些是它的发现（delta 无 seq 属真问题），有些是**我的 Prompt 与上游文档打架**（7 个族）。后者更危险，因为它会顺着指令做出一个合规但违背上层的实现。所以每次它报风险，第一件事是回去核对我自己的指令，而不是直接采信或直接驳回。
+
+---
+
+### S2 · 工程骨架 + 迁移 + seed
+
+**阶段**：SDD → 实现
+
+**核心 Prompt**：
+
+```
+已读 AGENTS.md。本次执行 S2：工程骨架 + 迁移 + seed。允许改的目录：
+package.json, pnpm-workspace.yaml, tsconfig*, .gitignore, .env.example,
+server/**, shared/**, web/**（仅脚手架）, scripts/**
+输入：specs/001-panel/data-model.md、specs/001-panel/contracts/openapi.yaml
+
+1. pnpm workspace：web / server / shared 三个包，TS strict，Vitest 配好。
+2. server：Fastify 起在 8787，GET /health 按 contracts/openapi.yaml 的 HealthStatus
+   （永远 200，body 含 status/db/llm/now；Key 未配置时 llm=missing，不返回 5xx）。
+3. 迁移：server/src/db/migrations/001_init.sql 严格按 data-model.md 建 9 张表，
+   加 events(discussion_id, seq) 唯一索引；migrate.ts 幂等。
+4. seed：5 条样例讨论，每场 status 决定它能带什么（finished ×3 / ready ×1 / draft ×1，
+   draft 0 条 turns 且无 agent_status），重复执行不产生脏数据。
+5. shared/schemas/：zod 定义 Guest / Turn / Event / Ledger / ConsensusPoint / DivergencePoint，
+   类型从 schema 推导，不手写 interface。
+
+约束：不接 LLM，不写前端页面，不写 README。
+```
+
+**意图**：把两份契约变成可执行的地基 —— 9 张表、5 条能撑起首页和演示的样例、一套前后端共用的 zod。这一轮的价值不是"跑起来了"，而是**后面每个模块都能拿真实数据写测试**。所以我要求 seed 必须能重放（events 齐套），否则 S8 的"观察一场"永远没法验证。
+
+**卡点**：这一轮交回来的东西**表面完全合格**：`pnpm check` 20 个测试全绿、9 张表建对、`turns.content` 的双分支 CHECK 也照抄对了。但把 SESSION_MAP 全文对着代码读了一遍之后，发现真正的问题不在 S2 本身，而在**计划与代码的接缝**，一共 26 处，其中 10 处会让某个 Session 直接做不完：
+
+- **4 个模块没有任何 Session 认领**：`modules/discussion`（5 个 REST 端点）、主循环 `turn/runner.ts`、首页 + 嘉宾确认页、以及 F5 要求的"每 2 条发言增量提炼"。S9 的允许改列表写的是"`turn/runner.ts`（仅串联）"—— 它以为这文件已经存在，但没人负责创建。
+- **seed 的三条样例是"怪物"**：`running` 场没有调度器，永久卡住且永久占用 AC-2.10 的并发名额；`draft` 场被硬编码 `locked=1` 还带 8 条发言和 `agent_status`，点"确认"会撞 `uq_agent_status_guest` 500。根因是 `data-model.md` §6 自己打架：要求"每场 locked=1"同时要求"≥1 场 draft"。
+- **契约自相矛盾 10 处**：`createdAt` 仍是 camel（我上一轮批量替换漏了这个 token，而且 `event.ts` 里还写着 `by contract` 把错误固化了）；openapi `servers` 是 3000 而服务在 8787；`DiscussionDetail = allOf[Summary, …]` 而 Summary 带 `additionalProperties: false`（JSON Schema 语义下 allOf 的另一支会被全部判为多余属性）；`/health` 直接读 `process.env`，破了自己定的 H5。
+- **两条 prompt 里埋了必然失败的指令**：S7 让 `container-type: inline-size` 开在 `.studio` 上、再用 `@container` 改它自己的 `grid-template-columns` —— 容器查询只对后代生效，这个写法"写了但永远不触发"；S8 让原生 `EventSource` 带 `Last-Event-ID` 且 404 不重连 —— 这两件事它都做不到。
+
+**修正**：没有推翻重写，按"文档先于代码"的顺序修：
+
+1. **补一个 S6.5**（讨论生命周期 + 主循环 + 增量提炼器），明确允许改 `modules/discussion/**`、`turn/runner.ts`、`summary/extract.ts`。这是本次最大的一处结构性补漏。
+2. **S7 从"只做演播厅"扩成三页**，并把不存在的 `docs/layout-sketch.png` 换成内联 ASCII 线框（缺文件时 AI 会自己编布局，"照做不要自创"就落空）；`container-type` 移到外层 `.studio-shell`，并写清"容器自身的栅格变化用 `@media`，面板内部用 `@container`"。
+3. **S8 改成 `fetch + ReadableStream`**，自己实现重连与 404 不重连。
+4. **seed 按 status 分档**：`draft` 0 条发言 / `locked=0` / 无 `agent_status`，`ready` 有阵容无发言，`running` 样例直接删掉（改为第 3 场 `finished` 并补 150–250 字总结）。测试同步改成按状态断言。
+5. **契约收口**：`createdAt → created_at`（三处，包括那句 `by contract` 注释）；`servers` 3000 → 8787；`DiscussionSummary` 去掉 `additionalProperties: false` 并写明原因；`app.ts` 的 env 读取抽到 `llm/config.ts`，让 H5 重新成立。
+6. `data-model.md` 补 INV-9（`summary_text` 必须逐字等于 summary turn）、`preparing` 的写入方、seed 写 `events` 的显式例外。
+
+改完 `pnpm check` 仍全绿（20 tests），`db:seed` 输出 5 discussions / 25 guests / 31 turns / 6+6 points / 127 events / 20 agent_status，与 §6 的表逐项对得上。
+
+**教训**：**单轮测试全绿 ≠ 计划可执行。** 这一轮的缺陷没有一条能被 `pnpm test` 抓到，全部藏在"Session A 的产出喂不进 Session B"的接缝里。所以每完成一个 Session，除了跑本轮的验收命令，还要做一次"下一轮能不能开工"的反向检查：它需要的输入文件存在吗？它被允许改的目录里有没有它要创建的模块？没有这一步，绿测试会一直骗人到 S8 才崩。
 
 ---

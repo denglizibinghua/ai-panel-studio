@@ -236,7 +236,7 @@ CREATE        INDEX idx_agent_status_state ON agent_status(discussion_id, state)
 |---|---|---|---|---|---|
 | `id` | INTEGER | 否 | 自增 | PK | — |
 | `discussion_id` | INTEGER | 是 | NULL | FK → `discussions(id)` | 允许 NULL（无归属的连通性探测） |
-| `module` | TEXT | 否 | — | `guest` / `ledger` / `turn` / `consensus` / `summary` | 与 `server/src/modules/` 同名 |
+| `module` | TEXT | 否 | — | `guest` / `ledger` / `turn` / `summary` | 与 `server/src/modules/` 同名（共识/分歧提炼属 `summary` 模块，不单独设值） |
 | `provider` | TEXT | 否 | `'deepseek'` | `deepseek` | v1 单供应商 |
 | `model` | TEXT | 否 | — | `length ≤ 64` | 实际模型名 |
 | `duration_ms` | INTEGER | 否 | — | `>= 0` | 端到端耗时（含重试） |
@@ -359,7 +359,8 @@ erDiagram
 
 实现规则（四条，缺一不可）：
 
-1. **唯一写入口**：只有 `server/src/modules/sse/publish.ts` 能 `INSERT INTO events`。其他模块（turn / host / summary）只能调用 `publish(discussionId, type, payload)`，不得直接写表。
+1. **唯一写入口（运行时）**：只有 `server/src/modules/sse/publish.ts` 能 `INSERT INTO events`。其他模块（discussion / guest / turn / host / summary）只能调用 `publish(discussionId, type, payload)`，不得直接写表。
+   **唯一例外（引导期）**：`server/src/db/seed.ts` 与迁移脚本可直接写 `events` —— 它们发生在任何 `publish()` 存在之前，且必须自己保证 `(discussion_id, seq)` 连续、`discussions.last_event_seq` 与之一致。除这两个文件外，没有第三个合法写点。
 2. **取号与写入同一事务**（`BEGIN IMMEDIATE`），事务内顺序固定：
 
    ```sql
@@ -396,14 +397,18 @@ erDiagram
 | INV-6 | `updated_seq` 必须等于产生该次变更的 `events.seq`，且 ≤ 该讨论当前 `last_event_seq` | 前端增量渲染漏条目 |
 | INV-7 | `llm_calls` 不含 prompt / 响应原文；`ledger.raw_json` 只含决策 JSON，不含 prompt | T1 泄露风险 + 额度审计表膨胀 |
 | INV-8 | `discussions.status` 只能按 `spec.md` §4.1 迁移 | 状态机与 SSE `state.*` 不一致 |
+| INV-9 | `discussions.summary_text` 必须**逐字等于**该讨论 `speech_type='summary'` 那条 `turns.content`。`turns` 是唯一权威，`summary_text` 是同事务写入的冗余快照（供首页列表免 join） | 两处各写一份必然漂移，列表与演播厅显示不同总结 |
 
 一致的「一笔发言」写入单元（同一个事务，顺序固定）：
 
 ```
-取 seq → INSERT events(turn.started) → UPDATE agent_status(state='speaking', updated_seq)
+取 seq → INSERT events(turn.started) → UPDATE agent_status(state='preparing', focus, updated_seq)
+       → [调模型，首个 delta 到达] → UPDATE agent_status(state='speaking', updated_seq)
        → 取 turn_no → INSERT turns → INSERT events(turn.done) → UPDATE agent_status(state='idle')
        → UPDATE discussions.updated_at
 ```
+
+`preparing` 在调用模型**之前**写入（AC-1.20 的三态必须有写入方，否则前端永远看不到"准备发言"）；模型调用失败时直接 `preparing → idle`，不经过 `speaking`。
 
 **transcript 与事件流不允许漂移**：一条 `turns` 行必定对应一条 `turn.done`，反之亦然；任何一侧单独存在即视为脏数据。
 
@@ -411,14 +416,20 @@ erDiagram
 
 ## 6. 样例数据（`sample=1`，S2 落地时的硬约束）
 
-样例不加独立表，直接作为普通 `discussions / guests / turns / consensus_points / divergence_points` 行写入，`discussions.sample=1`：
+样例不加独立表，直接作为普通行写入，`discussions.sample=1`。**每场的 `status` 决定它能带什么**（这是 S2 最容易做错的地方）：
 
-- 至少 5 场讨论，覆盖 `status`：≥2 场 `finished`（须有 `summary_text`、≥1 条 `final` 共识、≥1 条 `final` 分歧）、≥1 场 `running`（≥6 条 `turns`、≥2 条 `provisional` 条目，便于演示实时观察）、≥1 场 `draft` 或 `ready`。
-- 每场 **1 位 `host` + 4 位 `expert`（共 5 行 `guests`）**，即 `expert_count=4`（默认值）；`color_id` 两两不同，`locked=1`，且每位嘉宾都有一条 `agent_status` 行与一条 `agent.status` 事件。
-- 每场 8–12 条 `turns`，`turn_no` 连续、`speech_type` 去重后 ≥ 3 种（满足 `spec.md` AC-1.21）；`turns.content` 均为中文 1–2 句（`summary` 那条 150–250 字）。
-- 每场 2 条 `consensus_points` + 2 条 `divergence_points`，`updated_seq` 指向该场真实存在的 `events.seq`。
-- `events` 必须齐全到「可重放」：观察者从 `Last-Event-ID: 0` 接入即可还原整场。
-- `seed.ts` 幂等：以 `sample=1` 为识别键，重复执行不产生新行（先删 `sample=1` 的讨论再重建，或按 `topic` 判重）。
+| status | `guests.locked` | `turns` | `consensus/divergence` | `agent_status` | 其他 |
+|---|---|---|---|---|---|
+| `finished` | 1 | 8–12 条（含 1 条 `summary`） | 各 2 条，且全部 `final` | 有 | 必须有 `summary_text`（150–250 字）、`started_at`、`finished_at` |
+| `ready` | 1 | **0 条** | **0 条** | 有（`idle`，`updated_seq>0`） | `started_at`/`finished_at` 为 NULL |
+| `draft` | **0** | **0 条** | **0 条** | **无（0 行）** | 阵容待确认；点 confirm 才建 `agent_status` |
+
+- 共 **5 场**：`finished` × 3、`ready` × 1、`draft` × 1。
+- **不提供 `running` 样例**：没有调度器驱动会永久停在 `running`，而 `status='running'` 会计入 AC-2.10 的并发名额（≤3），直接吃掉用户配额。实时演示靠用户真开一场。
+- 每场 **1 位 `host` + 4 位 `expert` = 5 行 `guests`**（`expert_count=4`）；`color_id` 两两不同。
+- `finished` 场：`turn_no` 连续，`speech_type` 去重后 ≥3 种（AC-1.21）；专家发言 ≤120 字，`summary` 那条 150–250 字且与 `summary_text` 逐字相同（INV-9）。
+- 所有 `updated_seq` 必须指向该场真实存在的 `events.seq`；`events` 齐全到「从 `Last-Event-ID: 0` 可完整重放」。
+- `seed.ts` 幂等：以 `sample=1` 为识别键先删后建。
 
 > 裁决：`expert_count` 默认 4 = **4 位专家 + 1 位主持人 = 5 行 `guests`**。`docs/SESSION_MAP.md` S2 原文的「4 位嘉宾阵容」措辞已同步更正为「5 行 guests」。本文件为唯一口径。
 

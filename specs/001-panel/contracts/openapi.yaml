@@ -22,8 +22,8 @@ info:
        独立事件族送达（H1 / AGENTS §6.4）。`guests` 是阵容（非五流之一），随详情返回。
     8. 不返回 `ledger`、`llm_calls`、`raw_json`、`error_message`（AC-1.17 / data-model §5 INV-7）。
 servers:
-  - url: http://localhost:3000
-    description: 本地开发默认地址（端口由 `PORT` 环境变量决定，非契约的一部分）
+  - url: http://localhost:8787
+    description: 本地开发默认地址（与 `PORT` 环境变量默认值、vite proxy 目标一致）
 tags:
   - name: discussions
     description: 讨论列表、创建、详情
@@ -636,9 +636,11 @@ components:
 
     DiscussionSummary:
       type: object
-      description: 列表行与详情共同字段（AC-3.1 的「至少含」）。
+      description: |
+        列表行与详情共同字段（AC-3.1 的「至少含」）。
+        **刻意不加 `additionalProperties: false`**：`DiscussionDetail` 用 `allOf` 在本对象上叠加
+        详情字段，若此处封死，`allOf` 的另一支会全部被判为多余属性（JSON Schema 语义）。
       required: [id, topic, status, expert_count, updated_at]
-      additionalProperties: false
       properties:
         id:
           type: integer

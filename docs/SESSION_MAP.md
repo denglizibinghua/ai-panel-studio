@@ -23,14 +23,15 @@
 | S3 | 嘉宾生成与锁定 | SDD | `shared/schemas/guest.ts` | 生成接口 + 校验 + 幂等 | `pnpm -C server test -- guest` | 3h |
 | S4 | 主持人账本 | TDD 前置 | schema + contracts | ledger 提示词 + 解析 + 校验 + 停摆计数 | `pnpm -C server test -- ledger` | 3h |
 | S5 | 调度决策纯函数 | TDD | ledger schema | 先红后绿的 `decide.ts` | `pnpm -C server test -- decide` | 2h |
-| S6 | SSE 事件总线 | TDD | contracts/events.md | 每讨论一条流 + 序号补发 + 清理 | 并发 curl + 补发测试 | 3h |
-| S7 | 演播厅布局 | DDD | 手绘布局草图 | 三栏 + 独立滚动 + 三档断点 | 3 张截图 + 高度断言 | 3h |
-| S8 | 状态层接线 | DDD | S7 + events.md | EventSource → store → 五面板 | 真跑一场 | 3h |
+| S6 | SSE 事件总线 + confirm | TDD | contracts/events.md | 每讨论一条流 + 序号补发 + 清理 + `publishEphemeral` | 并发 curl + 补发测试 | 3h |
+| S6.5 | 讨论生命周期 + 主循环 | TDD | contracts + `decide` + `publish` | 5 个 REST 端点 + `runner.ts` + 增量提炼器 | `pnpm -C server test -- runner` | 4h |
+| S7 | 三页 + 演播厅布局 | DDD | 本节 ASCII 线框 | HomeView / GuestConfirmView / TheaterView | 9 张截图 + 高度断言 | 4h |
+| S8 | 状态层接线 | DDD | S7 + events.md | fetch 流 → store → 五面板 | 真跑一场 | 3h |
 | S9 | 收尾与兜底 | TDD | 全部 | 自然语言总结 + 共识定稿 + 失败兜底 | 边界用例 | 2h |
 | S10 | E2E 闭环 | E2E | contracts | 一条完整 Playwright 用例 | `pnpm e2e` | 2h |
 | S11 | 文档与提交 | — | 全部 | Prompt 记录 / 工作说明 / README / 邮件 | 打勾清单 | 2h |
 
-**合计 ≈ 29h 的"AI 协作工时"，实际墙钟约 12–15h**，留足返工和睡觉。
+**合计 ≈ 35h 的"AI 协作工时"，实际墙钟约 15–18h**，留足返工和睡觉。
 
 ---
 
@@ -144,9 +145,13 @@ server/**, shared/**, web/**（仅脚手架）, scripts/**
 2. server：Fastify 起在 8787，实现 GET /health（按 contracts/openapi.yaml 的 HealthStatus：**永远 200**，body 含 status/db/llm/now；Key 未配置时 llm=missing，不返回 5xx）。
 3. 迁移：server/src/db/migrations/001_init.sql，严格按 data-model.md 建 9 张表，
    加 events(discussion_id, seq) 唯一索引。写一个 migrate.ts 幂等执行。
-4. seed：server/src/db/seed.ts 写入 5 条完整样例讨论（每场 1 主持 + 4 专家 = **5 行 guests**、
-   8–12 条发言、2 条共识、2 条分歧、齐套 events、每位嘉宾一条 agent.status 事件），
-   供首页列表和演示用；重复执行不产生脏数据（按 sample=1 重建）。
+4. seed：server/src/db/seed.ts 写入 5 条样例讨论，**每场的 status 决定它能带什么**
+   （严格按 data-model.md §6 的表）：
+   finished ×3（1 主持 + 4 专家、8–12 条发言含 1 条 summary、共识/分歧各 2 条且 final、有 summary_text）
+   ready ×1（locked=1、有 agent_status、**0 条发言**）
+   draft ×1（locked=0、**0 条发言**、**无 agent_status**）
+   **不写 running 样例**（没有调度器会永久占用并发名额）。
+   重复执行不产生脏数据（按 sample=1 先删后建）。
 5. shared/schemas/：用 zod 定义 Guest / Turn / Event / Ledger / ConsensusPoint /
    DivergencePoint，类型从 schema 推导，不要手写 interface。
 
@@ -234,6 +239,14 @@ ledger.ts 要求：
 - validateLedger(obj, guestNames)：zod 校验 + 额外校验 next_speaker ∈ guestNames。
 - 三级降级：结构化输出 → json 模式 → 解析失败则返回 fallback（选最久未发言者，speech_type=supplement）。
 - 停摆计数：is_in_loop 或 !is_progress_being_made 各 +1，否则 -1（下限 0）；到 3 次返回 stop 信号。
+- **停摆计数的归属要说清**：本文件只负责「算这一次的增量」，**不持有跨轮状态**。
+  `computeStallDelta(ledger, prevStallCount) → nextStallCount` 这样签名，prev 作为入参、
+  next 作为出参；真正的持久化在 S6.5 的 runner 里（写 `ledger.stall_count`）。
+  S4 里出现任何 `let stall = 0` 这种模块级变量都算违约。
+- **AC-1.11「重试 1 次」与本文「三级降级」不矛盾，是两层**：
+  第一层 = 模型调用失败或输出不合法 → 重新请求 1 次（AC-1.11）；
+  第二层 = 两次都拿不到可用 JSON → 走 fallback（`parse_status='fallback'`）。
+  fallback **不算**第三次重试。文档里要把这两层分开写，别混成"重试三次"。
 - 这里只做纯解析与决策，不要发请求、不要写库。
 
 测试必须覆盖：正常 JSON / 带 ```json 围栏 / 缺 reason / next_speaker 不在名单 / 连续 3 次无进展。
@@ -261,6 +274,8 @@ server/src/modules/host/decide.ts, tests/host/decide.test.ts
 6. 已发言轮次达到上限 → {action:'summarize'}
 7. 嘉宾名单为空 → 抛明确错误，不返回 undefined
 8. 输入对象不可变：调用后原 transcript 数组长度不变
+9. 跨轮状态不外挂：`decide(input)` 的 `input` 里带 `prevStallCount`，返回值里带 `nextStallCount`；
+   同一组输入调用两次必须得到完全相同的结果（含 nextStallCount），证明它没有藏状态
 
 第二步：实现 decide()，满足全部 8 条。
 硬约束：不得出现 Date.now / Math.random / fetch / 任何 db import / 任何 llm import。
@@ -294,8 +309,10 @@ server/src/modules/sse/**, server/src/modules/guest/confirm.ts, tests/sse/**
 5. 心跳 15s 一次，帧内容 ": ping"，不写 id。
 6. res 的 close/error 触发清理：清 interval、从 Set 移除、interval 必须 unref。
 7. 客户端断开时，如果该讨论没有其他订阅者，不得因此中止讨论（讨论是持久任务）。
-
-8. 最后补上 `POST /api/discussions/:id/guests/confirm`（新建 server/src/modules/guest/confirm.ts）：
+8. **额外提供 `publishEphemeral(discussionId, type, payload)`**：只推给订阅者、不写表、不带 id。
+   `turn.delta` 不落库，走不了 `publish()` —— 这是它唯一的合法推送路径。白名单只允许
+   `turn.delta`，其他 type 传进来直接抛错（防止有人用它绕过 events 表）。
+9. 最后补上 `POST /api/discussions/:id/guests/confirm`（新建 server/src/modules/guest/confirm.ts）：
    单事务内 —— 校验 guest 行数 = expert_count + 1；全部 locked 置 1；为每位嘉宾建一行
    agent_status(state='idle')；**为每位嘉宾写一条 agent.status 事件**（updated_seq 取该事件 seq，
    不许留 0）；讨论 status 置 ready。行数不符返回 409 GUEST_COUNT_MISMATCH。
@@ -305,50 +322,188 @@ server/src/modules/sse/**, server/src/modules/guest/confirm.ts, tests/sse/**
   - Last-Event-ID=3 时只补 4,5 并收到 caught_up
   - 断开后 Set 大小归零
   - confirm 后 agent_status 行数 = 嘉宾数，且每行 updated_seq > 0
-验收：pnpm -C server test -- sse 全绿 + 我手动并发 curl 两个流不串。
+  - publishEphemeral('turn.delta') 推送成功且 events 表行数不变；
+    publishEphemeral('turn.done') 抛错
+验收：pnpm -C server test -- sse 全绿 + 我手动并发 curl 两个流不串
+（Windows 上必须用 curl.exe，PowerShell 的 curl 是 Invoke-WebRequest 别名，-N 不存在）。
 ```
 
 ---
 
-## S7 · 演播厅布局 ｜ DDD
+## S6.5 · 讨论生命周期 + 主循环 ｜ TDD（补漏 Session）
 
-> 关键：这一轮**全部用假数据**，只做壳。壳不塌，后面才敢接线。
+> **这一轮原本不存在，是审查发现的窟窿。** 没有它，S8 的"真跑一场"永远做不到：
+> 没有任何 Session 认领 `modules/discussion/`（5 个 REST 端点）和"开场→循环→收尾"的主循环。
 
-- **输入**：`docs/layout-sketch.png`（你自己手画拍照）
-- **允许改**：`web/src/views/TheaterView.vue`、`web/src/components/theater/**`、`web/src/styles/**`
-- **验收**：1440 / 1280 / 390 三张截图；`document.scrollingElement.scrollHeight === innerHeight`
+- **输入**：`contracts/openapi.yaml`（discussions / start / cancel）、`events.md`、S4/S5 的 `decide.ts`、S6 的 `publish()`
+- **允许改**：`server/src/modules/discussion/**`、`server/src/modules/turn/runner.ts`、`server/src/modules/summary/extract.ts`、`tests/discussion/**`、`tests/runner/**`
+- **验收**：`pnpm -C server test -- runner` 全绿 + 手动 HTTP 跑完一整场
 
 ```
-已读 AGENTS.md。本次执行 S7：演播厅布局壳，全部用假数据。
-允许改：web/src/views/TheaterView.vue, web/src/components/theater/**,
-web/src/styles/**, web/src/router（仅注册路由）
-不要碰：任何 api/、stores/、server/ 文件。不要接 SSE。
+已读 AGENTS.md。本次执行 S6.5：讨论生命周期 + 主循环 + 增量提炼器。允许改：
+server/src/modules/discussion/**, server/src/modules/turn/runner.ts,
+server/src/modules/summary/extract.ts, tests/discussion/**, tests/runner/**
+
+A. 讨论 CRUD（modules/discussion/）
+   1. POST /api/discussions        —— 建 draft，写 state.draft 事件（seq=1），返回 id
+   2. GET  /api/discussions        —— 支持 ?active=1；按 updated_at 倒序；只返回摘要字段
+   3. GET  /api/discussions/{id}   —— 讨论 + 阵容（guests），**不得**带 turns/共识/分歧/agent_status
+   4. POST /{id}/start             —— 仅 ready 可 start；先查 status='running' 是否已达 3 场
+                                     （超限 409 TOO_MANY_RUNNING）；置 running + 写 state.running
+                                     + run.started，然后**异步**启动 runner（不阻塞响应，5s 内返回）
+   5. POST /{id}/cancel            —— draft/generating/ready/running 均可；置 cancelled，
+                                     finished_at=now，error_code 保持 NULL，写 state.cancelled + run.cancelled，
+                                     通知 runner 停止（AbortController），此后不得再产生 turn
+   状态读写全部走 modules/discussion/status.ts 的单一计算函数（H8），REST 与 SSE 共用。
+
+B. 主循环（modules/turn/runner.ts）
+   async function runDiscussion(discussionId, signal)
+   1. 主持人开场：让 host 生成 opening，走「一笔发言写入单元」（data-model §5）
+   2. while (未结束 && !signal.aborted):
+        a. 调 decide()（S5 的纯函数）拿 {action, guest_id, speech_type, instruction}
+           —— 输入必须包含上一轮的 stall_count，并把它作为返回值传回（不要存在模块级变量里）
+        b. action='speak' → agent_status 置 preparing → 调模型拿 1–2 句 → speaking → 落 turns
+           → turn.done → idle
+        c. 每完成 2 条专家发言 → 调 summary/extract.ts 提炼，写 provisional 条目 + 事件
+        d. action='summarize' / 'force_stop' → 跳出
+   3. 收尾：生成 summary（150–250 字）→ 写 turns(speech_type='summary') **并在同一事务里**
+      回填 discussions.summary_text（INV-9：两者逐字相同）→ state.finished + run.finished
+   4. 任何一步致命失败 → status='failed' + run.failed，不留半写状态
+   5. signal.aborted → 直接 return，不写 finished
+
+C. 增量提炼器（modules/summary/extract.ts）
+   extractPoints(transcript, roster) → { consensus: string[], divergence: string[] }
+   规则：每次只看最近 4 条发言；输出必须是中文一句话 ≤120 字；
+   与已有文本重复的不新增（靠 uq_consensus_text 兜底）；写入 status='provisional'。
+   模型调用必须走 server/src/llm/，且记录 llm_calls(module='summary')。
+
+测试（先红后绿）：
+  - start 一个 draft 讨论 → 409 INVALID_STATE_TRANSITION
+  - 已有 3 场 running 时再 start → 409 TOO_MANY_RUNNING
+  - runner 用 fake LLM 跑完一场 → turns ≥ 6、至少 1 条 summary、status=finished、
+    summary_text 与 summary turn 的 content 逐字相等
+  - 每 2 条专家发言后 consensus_points 行数增加
+  - cancel 后 runner 停止，turns 行数不再增加，status=cancelled 且 error_code IS NULL
+验收：pnpm -C server test -- runner 全绿；并给我一段"curl 建讨论 → start → 等 30s → 查详情"
+的真实输出（status 应为 finished，turns 应有若干条）。
+```
+
+---
+
+## S7 · 三个页面 + 演播厅布局 ｜ DDD
+
+> 关键：这一轮**全部用假数据**，只做壳。壳不塌，后面才敢接线。
+> **三页都要做**：`HomeView`（列表 + 新建表单）、`GuestConfirmView`（确认阵容）、`TheaterView`（演播厅）。
+> 原计划只写 Theater，首页与确认页会掉地上，S10 的 E2E 第 1/3 步直接跑不了。
+
+- **输入**：本节的 ASCII 线框（不要外部图片）+ `docs/SESSION_MAP.md` + `AGENTS.md` §4
+- **允许改**：`web/src/views/**`、`web/src/components/**`、`web/src/styles/**`、`web/src/router/**`、`web/src/mock/**`
+- **技能**：本 Session 必须加载 `impeccable`（视觉品味 / 层级 / 字距 / 动效），否则产出是"能看的后台表单"而不是"演播厅"
+- **验收**：三页各 3 档截图（共 9 张）；`document.scrollingElement.scrollHeight === innerHeight` 在演播厅为 true
+
+**线框（文字版，照这个做）**
+
+```
+首页 HomeView
+┌──────────────────────────────────────────────┐
+│  AI PANEL STUDIO            [+ 发起新讨论]   │
+├──────────────────────────────────────────────┤
+│  进行中                                       │
+│  ┌────────────────────────────────────────┐  │
+│  │ 议题标题            [5 位嘉宾]  ● running│  │
+│  │ 更新于 2 分钟前                [加入观察]│  │
+│  └────────────────────────────────────────┘  │
+│  已结束                                       │
+│  ┌────────────────────────────────────────┐  │
+│  │ 议题标题            [5 位嘉宾]  ✓ finished│ │
+│  │ 一句话总结预览…              [查看记录] │  │
+│  └────────────────────────────────────────┘  │
+└──────────────────────────────────────────────┘
+新建表单：议题输入框（1–200 字计数）+ 专家人数步进器（1–8，默认 4）+ [生成嘉宾]
+
+确认页 GuestConfirmView
+┌──────────────────────────────────────────────┐
+│  ← 返回      确认本场阵容（4 位专家 + 1 主持）│
+├──────────────────────────────────────────────┤
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐        │
+│  │ ● 色块  │ │ ●       │ │ ●       │        │
+│  │ 姓名     │ │ 姓名    │ │ 姓名    │        │
+│  │ 职业     │ │ 职业    │ │ 职业    │        │
+│  │ 立场一句话│ │ 立场    │ │ 立场    │        │
+│  └─────────┘ └─────────┘ └─────────┘        │
+│                          [重新生成] [确认阵容]│
+└──────────────────────────────────────────────┘
+
+演播厅 TheaterView（三栏 + 顶部状态条 + 底部运输条）
+┌───────────────────────────────────────────────────────────┐
+│ ● LIVE   议题标题                    4 位专家   [退出]     │  header (auto)
+├──────────┬────────────────────────────────┬───────────────┤
+│ 阵容      │  Transcript（独立滚动）          │ 共识 / 分歧    │
+│ ● 主持    │  主持人 · 开场                   │ 共识           │
+│ ● 专家A   │  专家A · 挑战  「…」             │  · 一条        │
+│  preparing│  专家B · 反驳  「…」             │ 分歧           │
+│ ● 专家B   │  …                              │  · 一条        │
+│  speaking │                                 │               │
+│ ● 专家C   │                                 │               │
+│  idle     │                                 │               │
+├──────────┴────────────────────────────────┴───────────────┤
+│  第 8 / 20 条 · 进行中              [取消讨论]              │  transport (auto)
+└───────────────────────────────────────────────────────────┘
+```
+
+**S7 开场提示词**
+
+```
+已读 AGENTS.md。本次执行 S7：三个页面 + 演播厅布局壳，全部用假数据。
+允许改：web/src/views/**, web/src/components/**, web/src/styles/**,
+        web/src/router/**, web/src/mock/**
+不要碰：任何 api/、stores/、server/ 文件。不要接 SSE、不要发请求。
+
+三个页面（按上面线框做）：
+1. HomeView        —— 列表分「进行中 / 已结束」两组 + 新建讨论表单（议题输入 + 人数步进器）
+2. GuestConfirmView —— 5 张嘉宾卡（姓名 / 职业 / 立场 / 色块）+ 重新生成 / 确认阵容
+3. TheaterView     —— 三栏 + 各面板独立滚动 + 顶部状态条 + 底部运输条
 
 布局硬要求（照做，不要自创）：
-1. 根：html, body, #app { height:100%; overflow:hidden }；.studio { height:100vh; height:100dvh; }
-   绝对不要用 min-height:100vh —— 那会让文档滚动，内层 overflow 永远不生效。
-2. .studio 用 Grid：
-   grid-template-rows: auto minmax(0,1fr) auto;
-   grid-template-columns: minmax(0,18rem) minmax(0,1fr) minmax(0,22rem);
-   grid-template-areas: "header header header" "roster stage insights" "transport transport transport";
+1. 根：html, body, #app { height:100%; overflow:hidden }
+2. 演播厅必须套两层：
+   <div class="studio-shell"><div class="studio">…</div></div>
+   .studio-shell { height:100vh; height:100dvh; container-type:inline-size; }
+   .studio {
+     height:100%; display:grid;
+     grid-template-rows: auto minmax(0,1fr) auto;
+     grid-template-columns: minmax(0,18rem) minmax(0,1fr) minmax(0,22rem);
+     grid-template-areas: "header header header"
+                          "roster stage insights"
+                          "transport transport transport";
+   }
+   ⚠️ container-type 必须开在 .studio-shell 上，**绝不能开在 .studio 自己身上、再用
+   @container 改它自己的 grid-template-columns** —— container query 只对容器后代生效，
+   改不了容器自身。上一版 prompt 就是这么写错的，照抄会变成"写了但永远不触发"。
 3. .studio > * { min-width:0; min-height:0 }
 4. 每个可滚动面板：overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;
-   并且它内部不要再套一个没有 min-height:0 的 flex/grid 祖先。
-5. 用 container-type: inline-size 开在 .studio 上，断点判断用 @container 而不是 @media
-   —— 1440 屏上有 18rem+22rem 侧栏时舞台只有约 800px，@media 不会触发。
-6. 断点：
-   @container (max-width: 1200px) → 右侧 insights 折叠成抽屉按钮，stage 占两栏
-   @container (max-width: 900px)  → 单栏 + 顶部标签切换 roster/stage/insights
-7. 超宽（≥1800px）：加第四栏 OR stage 最大宽度 1600px 居中，二选一，说明理由。
+   内部不要再套一个没有 min-height:0 的 flex/grid 祖先。
+5. 响应式分两类写法，别混：
+   - 「容器自身」的栅格变化（比如窄屏把三栏变单栏）→ 用 @media，因为它改的是 .studio 自己。
+   - 「面板内部的排布」→ 用 @container (max-width: …)，因为容器查询只对后代生效。
+   断点：1200px 折叠右侧 insights 为抽屉；900px 变单栏 + 顶部标签切换 roster/stage/insights。
+6. 超宽（≥1800px）：加第四栏 OR stage 最大宽度 1600px 居中，二选一，说明理由。
+7. 绝对不要用 min-height:100vh 当壳高 —— 文档会滚动，内层 overflow 永远不生效。
 
-组件拆分：RosterPanel / ExpertCard / ExpertStatusBadge / TranscriptFeed /
-TranscriptItem / ConsensusBoard / HostBar。全部接收 props，不自己发请求。
+组件：RosterPanel / ExpertCard / ExpertStatusBadge / TranscriptFeed / TranscriptItem /
+ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
+全部接收 props，不自己发请求。
 
-假数据：**1 位主持 + 4 位专家**、10 条发言、2 条共识、2 条分歧，写死在一个 mock.ts 里。
+假数据写死在一个 mock.ts：1 位主持 + 4 位专家、10 条发言、2 条共识、2 条分歧。
 
-验收：我要三张截图（1440x900 / 1280x800 / 390x844），以及控制台执行
-document.scrollingElement.scrollHeight === window.innerHeight 的结果（必须 true）。
-做完只汇报文件清单 + 截图路径 + 那条断言结果。
+视觉要求：加载 impeccable 技能，把它做成"演播厅"而不是"后台表单"——
+暗色舞台、专家色块贯穿卡片与 transcript、状态点三态（idle/preparing/speaking）视觉可辨、
+共识与分歧分区明显、留白克制、中文长文本不溢出。
+
+验收：三页各三张截图（1440x900 / 1280x800 / 390x844，共 9 张），
+以及演播厅页控制台执行 document.scrollingElement.scrollHeight === window.innerHeight
+（必须 true，false 说明壳高写错了）。
+做完只汇报：文件清单 + 9 张截图路径 + 那条断言结果 + 你为超宽屏选的方案。
 ```
 
 ---
@@ -366,13 +521,18 @@ document.scrollingElement.scrollHeight === window.innerHeight 的结果（必须
 
 实现：
 1. api/client.ts：fetch 封装，统一错误处理。
-2. api/events.ts：EventSource 封装，支持断开重连并带上 Last-Event-ID，
+2. api/events.ts：**不要用原生 EventSource**。它有三个死穴，正好撞上本项目的三条契约：
+   ① 不能自定义请求头（无法带 Last-Event-ID）；② 404 会自动重连（AC-3.6 要求不重连）；
+   ③ 无法区分"服务端正常结束"与"网络断开"。
+   改用 `fetch(url, { headers: { 'Last-Event-ID': String(lastSeq) }, signal })` +
+   `response.body.getReader()` 手写 SSE 解析（按 `\n\n` 切帧，解析 `id:` / `event:` / `data:`），
+   自己实现：正常结束不重连、404 不重连、网络错误退避重连（1s→2s→4s，上限 3 次）。
    按事件族分发：state.* / run.* / agent.* / turn.* / consensus.* / divergence.*
 3. stores/discussion.ts（Pinia）：
    - 五份互相独立的 state：status、agentStatusMap、turns、consensus、divergence
    - **不许合并成一个大对象**，这是作业的硬性隔离要求
    - turn.delta 追加到当前 turn 的缓冲，turn.done 才落进 turns 数组
-   - 按 seq 去重（收到 seq <= 已处理最大值就丢弃）
+   - 按 seq 去重（收到 seq <= 已处理最大值就丢弃；无 id 的 delta 不参与去重）
 4. 组件只从 store 读，不直接调 api。
 
 验收：真跑一场讨论（后端可用假模型开关），我要看到——
@@ -393,22 +553,32 @@ document.scrollingElement.scrollHeight === window.innerHeight 的结果（必须
 
 ```
 已读 AGENTS.md。本次执行 S9：收尾、共识定稿、失败兜底。允许改：
-server/src/modules/summary/**, server/src/modules/turn/runner.ts,
-web/src/components/theater/SummaryPanel.vue
+server/src/modules/summary/summary.ts, server/src/modules/summary/merge.ts,
+server/src/modules/discussion/retry.ts, web/src/components/theater/SummaryPanel.vue,
+tests/summary/**
+注意：**增量提炼（每 2 条专家发言一次）已经在 S6.5 做完了**，本轮只做结束时的定稿。
 
 实现：
-1. 讨论结束时，把完整 transcript 喂给模型，生成一段**自然语言**总结（150–250 字），
+1. 结束时总结：把完整 transcript 喂给模型，生成一段**自然语言**总结（150–250 字），
    要求：不复述 JSON、不逐条罗列、要点出主要分歧。
-   服务端只返回纯文本字符串，前端直接渲染。
+   写两条且必须在同一事务里：
+   - `turns(speech_type='summary')` 一行
+   - `discussions.summary_text` 逐字等于上一条的 content（INV-9）
 2. 共识/分歧定稿：把 status='provisional' 的条目做一次归并去重，
-   保留的置 'final' 并记录 updated_seq；被推翻的置 'dropped'，前端淡出。
+   保留的置 'final' 并记录 updated_seq；被推翻的置 'dropped'（单向，不得复活）。
 3. 兜底：
-   - transcript 为空 → 总结返回固定文案"本场讨论未产生有效发言"
-   - 全部发言人调用失败 → 讨论置 failed，SSE 推 run.failed，前端显示重试按钮
-   - 总结调用超时（>30s）→ 返回"总结生成失败，请查看完整记录"，不阻塞结束态
-4. 前端 SummaryPanel：loading / success / failed 三态，failed 时可重试。
+   - transcript 为空 → 总结写入固定文案「本场讨论未产生有效发言」，status 仍为 finished
+   - 全部专家调用失败 → status='failed' + run.failed，前端显示重试按钮
+   - 总结调用超时（>30s）→ summary_text 写「总结生成失败，请查看完整记录」，仍置 finished，
+     run.finished.summary_failed=true
+4. **补一个重试端点**（原计划漏了，S9 的"重试按钮"没有后端就无法闭环）：
+   POST /api/discussions/:id/retry-summary
+   仅 status='failed' 且 error_code='ALL_SPEAKERS_FAILED' 允许；成功后 status 置 finished
+   （或 failed→finished 的补充迁移），写 run.finished；其他状态返回 409 INVALID_STATE_TRANSITION。
+   同时在 spec §4.1 状态机补这条迁移（改文档走 Ask first）。
+5. 前端 SummaryPanel：loading / success / failed 三态，failed 时可重试（调上面的端点）。
 
-测试：三种兜底各一条，空 transcript 那条必须先红后绿。
+测试：三种兜底各一条 + retry-summary 的前置条件一条，空 transcript 那条必须**先红后绿**。
 验收：pnpm -C server test -- summary 全绿。
 ```
 
@@ -417,18 +587,18 @@ web/src/components/theater/SummaryPanel.vue
 ## S10 · E2E 闭环 ｜ E2E
 
 - **输入**：`contracts/*`
-- **允许改**：`e2e/**`、`playwright.config.ts`
+- **允许改**：`e2e/**`、`playwright.config.ts`、`server/src/llm/fake.ts`、`server/src/llm/index.ts`
 - **验收**：`pnpm e2e` 一次通过；产物里有截图；二次运行也通过（可重复）
 
 ```
 已读 AGENTS.md。本次执行 S10：端到端测试。允许改：
-e2e/**, playwright.config.ts
+e2e/**, playwright.config.ts, server/src/llm/fake.ts, server/src/llm/index.ts
 输入：specs/001-panel/spec.md 的 P1 用户故事与验收标准
 
 写一条完整链路的 Playwright 用例（不是四个独立小用例）：
-1. 打开首页 → 看到 5 条样例讨论
+1. 打开首页 → 看到样例讨论分组（进行中 / 已结束）
 2. 新建讨论：输入话题、专家数 4 → 生成嘉宾
-3. 嘉宾确认页 → 校验 4 张卡片都有姓名/职业/立场/色块 → 点确认
+3. 嘉宾确认页 → 校验 5 张卡片都有姓名/职业/立场/色块 → 点确认
 4. 进入演播厅 → 等待主持人开场发言出现
 5. 断言 transcript 至少出现 6 条，每条都有发言人名
 6. 断言专家状态徽章至少出现过一次 "speaking"
@@ -436,9 +606,10 @@ e2e/**, playwright.config.ts
 8. 断言页面上不存在原始 JSON（用 page.content() 正则排除 `"reason":`、`"type":"`）
 9. 全流程截图存 e2e/screenshots/
 
-约束：模型调用必须走可切换的 fake provider（环境变量 FAKE_LLM=1），
-否则 E2E 不稳定。如果 S2 没留这个开关，先加上再写测试，但只在
-server/src/llm/ 内加，不许改业务代码。
+约束：模型调用必须走可切换的 fake provider（环境变量 FAKE_LLM=1），否则 E2E 不稳定。
+**本轮允许改 server/src/llm/ 下的文件**（原计划只允许 e2e/**，自相矛盾，已修正）：
+新增 fake.ts 实现一个确定性的假 provider（固定返回合法 JSON / 固定文本，可注入延迟），
+在 index.ts 里按 FAKE_LLM 选择实现。**不得改动任何业务模块。**
 
 验收：pnpm e2e 跑两遍都绿，把两遍输出和截图目录贴给我。
 ```
@@ -451,8 +622,13 @@ server/src/llm/ 内加，不许改业务代码。
 
 - [ ] `docs/PROMPT_LOG.md` 至少 5 段，四阶段齐全，每段有"卡点 + 怎么修"
 - [ ] `docs/WORK_REPORT.md` 1–1.5 页，含 2–3 个真实问题
+- [ ] **`docs/PRD.md`**（交付物原文明确要求 "PRD、ER 图等"，ER 已有，PRD 别漏）
+- [ ] `docs/TEST.md` 测试说明（跑什么、覆盖哪些 AC）
 - [ ] `README.md` 含：快速开始 / 环境变量 / 技术选型理由 / API 列表 / 已完成 / 后续改进
-- [ ] `git log --oneline` 呈现 `docs → schema → ui → tests → feat` 的层级
+- [ ] `git log --oneline` 能看出层级。**约定 commit 前缀**：
+      `docs:` → `schema:` → `test:` → `feat:` → `ui:` → `e2e:`
+      （作业原文给的示例顺序是 docs/schema → ui → tests → feat → logic；我们的实际顺序更贴近工程节奏，
+       在 WORK_REPORT 里用一段话说明为什么，比硬伪造历史强）
 - [ ] 仓库邀请 `xule@wisquest.com` 对应账号，并确认已接受
 - [ ] 邮件主题含真实姓名（+ BOSS 昵称若不同）
 - [ ] 发完邮件截图回传
@@ -478,7 +654,7 @@ server/src/llm/ 内加，不许改业务代码。
 |---|---|
 | SDD | S0、S1、S2、S3 |
 | DDD | S7、S8 |
-| TDD | S4、S5、S6、S9 |
+| TDD | S4、S5、S6、S6.5、S9 |
 | E2E | S10 |
 
 > 挑 6–8 条写进文档即可，但**必须是真跑过的**。全是"一次通过"的记录反而不可信。

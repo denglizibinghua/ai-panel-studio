@@ -305,7 +305,7 @@ data: {"guest_id":7,"state":"speaking","focus":"成本与体验的取舍"}
 | `turn_no` | integer ≥ 1 | 发言序号 |
 | `speech_type` | enum | 同 8.1 |
 | `content` | string | 定稿正文；专家 1–120 字（超长已按句末截断，AC-1.10），主持 `opening`/`summary` 1–400 字 |
-| `createdAt` | string(ISO-8601) | 定稿落库时间 |
+| `created_at` | string(ISO-8601) | 定稿落库时间 |
 
 - 与 `turns` 表**一对一**：一条 `turn.done` ↔ 一行 `turns`，反之亦然（`data-model.md` §5）。
 - 因 `events` 是唯一可重放源，`content` **必须**在事件里（否则 `Last-Event-ID: 0` 无法重建
@@ -321,7 +321,7 @@ data: {"guest_id":7,"state":"speaking","focus":"成本与体验的取舍"}
 ```
 id: 31
 event: turn.done
-data: {"guest_id":7,"turn_no":9,"speech_type":"rebuttal","content":"我不同意这个前提，成本下降不等于体验提升。","createdAt":"2026-11-17T08:33:02.000Z"}
+data: {"guest_id":7,"turn_no":9,"speech_type":"rebuttal","content":"我不同意这个前提，成本下降不等于体验提升。","created_at":"2026-11-17T08:33:02.000Z"}
 ```
 
 ---
