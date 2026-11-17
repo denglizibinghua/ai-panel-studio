@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import AppCard from '../common/AppCard.vue';
 import AppButton from '../common/AppButton.vue';
+import AppCard from '../common/AppCard.vue';
 import AppInput from '../common/AppInput.vue';
 import AppStepper from '../common/AppStepper.vue';
 
 /**
- * 首页内联新建表单（docs/SESSION_MAP.md §S7）。
+ * 首页内联新建表单（docs/DESIGN.md §7 表单档 48rem）。
  * 纯壳：不请求后端，submit 只把 { topic, expertCount } 抛给父级。
  */
 const props = withDefaults(
@@ -51,7 +51,10 @@ function cancel(): void {
 <template>
   <AppCard padded class="new-discussion">
     <form v-if="!generating" class="new-discussion__form" @submit.prevent="submit">
-      <h2 class="new-discussion__title">发起新讨论</h2>
+      <div class="new-discussion__head">
+        <h2 class="new-discussion__title">发起新讨论</h2>
+        <span class="new-discussion__eyebrow">NEW SESSION</span>
+      </div>
 
       <div class="new-discussion__field">
         <AppInput
@@ -79,8 +82,6 @@ function cancel(): void {
       <AppCard
         v-for="seat in 3"
         :key="seat"
-        raised
-        padded
         class="new-discussion__skeleton"
       />
       <div class="new-discussion__actions">
@@ -93,6 +94,7 @@ function cancel(): void {
 <style scoped>
 .new-discussion {
   min-width: 0;
+  background: var(--bg-surface);
 }
 
 .new-discussion__form {
@@ -102,12 +104,28 @@ function cancel(): void {
   min-width: 0;
 }
 
+.new-discussion__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
 .new-discussion__title {
   margin: 0;
   font-size: var(--fs-md);
   line-height: var(--lh-md);
   font-weight: var(--fw-medium);
   color: var(--fg-primary);
+}
+
+.new-discussion__eyebrow {
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  font-weight: var(--fw-strong);
+  letter-spacing: var(--track-micro);
+  color: var(--fg-faint);
+  white-space: nowrap;
 }
 
 .new-discussion__field {
@@ -123,6 +141,7 @@ function cancel(): void {
   font-size: var(--fs-xs);
   line-height: var(--lh-xs);
   color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .new-discussion__controls {
@@ -143,19 +162,19 @@ function cancel(): void {
 .new-discussion__generating {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   min-width: 0;
 }
 
 .new-discussion__status {
-  margin: 0;
+  margin: 0 0 var(--sp-1);
   font-size: var(--fs-sm);
   line-height: var(--lh-sm);
   color: var(--fg-secondary);
 }
 
 .new-discussion__skeleton {
-  height: 64px;
+  height: 48px;
   animation: new-discussion-breath var(--dur-breath) var(--ease) infinite;
 }
 

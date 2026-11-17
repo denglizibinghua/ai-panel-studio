@@ -5,7 +5,7 @@ import { expertColorStyle } from '../../styles/expert-colors';
 import type { Guest, SpeechType, Turn } from '@ai-panel/shared';
 
 /**
- * 一条发言（DESIGN §6.1 的 F6：姓名 + 职业 + 色块）。
+ * 一条发言（DESIGN §7 的 F6：姓名 + 职业 + 色块）。
  * 2px 左竖条 = 该嘉宾的专家色，是这一条发言的身份标识，全站同源于 expertColorStyle()。
  */
 const props = defineProps<{ turn: Turn; guest: Guest | undefined }>();
@@ -68,8 +68,8 @@ const timeText = computed(() => props.turn.created_at.slice(11, 16));
 }
 
 .transcript-item__name {
-  font-size: var(--fs-sm);
-  line-height: var(--lh-sm);
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
   font-weight: var(--fw-medium);
   color: var(--fg-primary);
   white-space: nowrap;
@@ -102,7 +102,6 @@ const timeText = computed(() => props.turn.created_at.slice(11, 16));
   color: var(--fg-primary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  text-align: justify;
 }
 
 /* 舞台被压窄时元信息行换行（只改本组件后代） */

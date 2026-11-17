@@ -1,38 +1,49 @@
 /**
- * 视觉 token —— 全站唯一的样式真相源（见 docs/DESIGN.md）。
+ * STAGE v2.0 — 视觉 token（见 docs/DESIGN.md）。
  *
- * 规则：组件里只能 `var(--…)`，不得出现 #hex / rgb() / hsl()。
- * 间距只用 --sp-1..7（4/8/12/16/24/32/48），不要发明 20px / 5px。
+ * 唯一真相源：组件里只能 `var(--…)`，不得出现 #hex / rgb() / hsl()。
+ * 间距只用 --sp-1..7（4/8/12/16/24/32/48）。
+ * 层次机制只有一种：表面抬升 + 1px 描边；全站零投影。
  */
 
 :root {
-  /* ── 基底 ───────────────────────────────────────────── */
-  --bg-base: #0b0f14;
-  --bg-panel: #121821;
-  --bg-raised: #1a2230;
-  --bg-inset: #0e141b;
-  --line-subtle: rgba(255, 255, 255, 0.06);
-  --line-strong: rgba(255, 255, 255, 0.12);
+  /* ── 表面（四级抬升）────────────────────────────────── */
+  --bg-canvas: #070809;
+  --bg-inset: #080a0b;
+  --bg-surface: #0c0e10;
+  --bg-raised: #13161a;
+  --bg-hover: #1a1e23;
 
-  /* ── 文字 ───────────────────────────────────────────── */
-  --fg-primary: #e8edf4;
-  --fg-secondary: #9aa7b8;
-  --fg-muted: #5d6b7d;
+  /* ── 描边 ───────────────────────────────────────────── */
+  --line-subtle: #1a1e23;
+  --line-strong: #2a3038;
+
+  /* ── 文字（4 档）────────────────────────────────────── */
+  --fg-primary: #eef1f5;
+  --fg-secondary: #a2abb7;
+  --fg-muted: #6b7482;
+  --fg-faint: #474f5a;
+
+  /* ── 强调（全站唯一：反白）──────────────────────────── */
+  --accent: #f2f4f7;
+  --accent-hover: #ffffff;
+  --accent-ink: #070809;
+  --accent-quiet: rgba(242, 244, 247, 0.1);
+  --accent-ring: rgba(242, 244, 247, 0.55);
 
   /* ── 语义色 ─────────────────────────────────────────── */
-  --accent: #6ea8fe;
-  --accent-strong: #3f7fe0;
-  --accent-bg: rgba(110, 168, 254, 0.14);
-  --danger: #f26d6d;
-  --danger-bg: rgba(242, 109, 109, 0.14);
-  --danger-ring: rgba(242, 109, 109, 0.35);
-  --success: #4ec98a;
-  --warn: #f5b642;
+  --success: #4ac08a;
+  --success-bg: rgba(74, 192, 138, 0.12);
+  --warn: #e8b45a;
+  --warn-bg: rgba(232, 180, 90, 0.12);
+  --danger: #f0716c;
+  --danger-bg: rgba(240, 113, 108, 0.12);
+  --danger-ring: rgba(240, 113, 108, 0.36);
 
-  /* ── 专家色 × 3 用途（10 个 color_id）───────────────── */
-  --c-amber-fg: #f5b642;
-  --c-amber-bg: rgba(245, 182, 66, 0.12);
-  --c-amber-ring: rgba(245, 182, 66, 0.38);
+  /* ── 专家色 × 3 用途（10 个 color_id，命名不可改）───── */
+  --c-amber-fg: #f5b23f;
+  --c-amber-bg: rgba(245, 178, 63, 0.12);
+  --c-amber-ring: rgba(245, 178, 63, 0.38);
 
   --c-rose-fg: #f2708f;
   --c-rose-bg: rgba(242, 112, 143, 0.12);
@@ -42,9 +53,9 @@
   --c-sky-bg: rgba(90, 169, 240, 0.12);
   --c-sky-ring: rgba(90, 169, 240, 0.38);
 
-  --c-emerald-fg: #3fbf87;
-  --c-emerald-bg: rgba(63, 191, 135, 0.12);
-  --c-emerald-ring: rgba(63, 191, 135, 0.38);
+  --c-emerald-fg: #34b87c;
+  --c-emerald-bg: rgba(52, 184, 124, 0.12);
+  --c-emerald-ring: rgba(52, 184, 124, 0.38);
 
   --c-violet-fg: #a58bf5;
   --c-violet-bg: rgba(165, 139, 245, 0.12);
@@ -70,19 +81,30 @@
   --c-fuchsia-bg: rgba(224, 103, 201, 0.12);
   --c-fuchsia-ring: rgba(224, 103, 201, 0.38);
 
-  /* ── 字号 / 字重 ────────────────────────────────────── */
+  /* ── 字号阶（7 档，用途见 DESIGN.md §3）─────────────── */
+  --fs-micro: 11px;
+  --lh-micro: 1.4;
+  --track-micro: 0.08em;
+
   --fs-xs: 12px;
   --lh-xs: 1.5;
+
   --fs-sm: 13px;
-  --lh-sm: 1.6;
+  --lh-sm: 1.65;
+
   --fs-base: 14px;
-  --lh-base: 1.7;
+  --lh-base: 1.75;
+
   --fs-md: 16px;
-  --lh-md: 1.6;
+  --lh-md: 1.5;
+
   --fs-lg: 20px;
-  --lh-lg: 1.4;
-  --fs-xl: 28px;
-  --lh-xl: 1.25;
+  --lh-lg: 1.35;
+  --track-lg: -0.01em;
+
+  --fs-xl: clamp(24px, 2.4vw, 30px);
+  --lh-xl: 1.2;
+  --track-xl: -0.02em;
 
   --fw-regular: 400;
   --fw-medium: 500;
@@ -100,22 +122,27 @@
   --sp-6: 32px;
   --sp-7: 48px;
 
-  /* ── 圆角 ───────────────────────────────────────────── */
+  /* ── 圆角（形状身份，不承担层级）────────────────────── */
+  --r-xs: 4px;
   --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
+  --r-md: 8px;
+  --r-lg: 12px;
   --r-full: 999px;
 
   /* ── 动效 ───────────────────────────────────────────── */
   --dur-fast: 150ms;
   --dur-base: 250ms;
-  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
   --dur-breath: 1.8s;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 
-  /* ── 布局 ───────────────────────────────────────────── */
+  /* ── 布局（三页共用，见 DESIGN.md §7）───────────────── */
+  --page-max: 90rem; /* 1440 */
+  --page-gutter: var(--sp-5); /* 24 */
+  --read-max: 80rem; /* 1280 */
+  --form-max: 48rem; /* 768 */
+  --header-h: 56px;
   --roster-w: 18rem;
   --insights-w: 22rem;
-  --stage-max: 1600px;
 }
 
 /* 全局基线：只做"不塌"和"字体"，不做任何组件样式 */
@@ -133,12 +160,19 @@ body,
 }
 
 body {
-  background: var(--bg-base);
+  background: var(--bg-canvas);
   color: var(--fg-primary);
   font-family: var(--font-ui);
   font-size: var(--fs-base);
   line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
+}
+
+/* 窄屏 gutter 降到 16（页框仍由 PageShell 统一） */
+@media (max-width: 900px) {
+  :root {
+    --page-gutter: var(--sp-4);
+  }
 }
 
 /* 尊重系统偏好：所有循环动画（呼吸、光标）必须停 */

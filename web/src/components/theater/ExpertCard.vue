@@ -6,16 +6,17 @@ import { expertColorStyle } from '../../styles/expert-colors';
 import type { AgentState, Guest } from '@ai-panel/shared';
 
 /**
- * 阵容里的专家卡（docs/DESIGN.md §6.1）。
+ * 阵容里的专家卡（docs/DESIGN.md §8.1）。
  *
  * 三态：
- * - idle：6px 点 `--fg-muted`，卡底 `--bg-raised`（AppCard raised 自带）
- * - preparing：6px 专家 `-fg` + 2px `-ring` 外圈 + 呼吸，局面 = 「准备中」
- * - speaking：8px 实心 `-fg` + 2px `-ring`，左侧 2px `-fg` 竖条（inset bar，唯一允许的 shadow 用法）
+ * - idle：6px 点 `--fg-muted`，卡底 `--bg-raised`（AppCard 默认底）
+ * - preparing：6px 专家 `-fg` + 2px `-ring` 外圈 + 呼吸
+ * - speaking：8px 实心 `-fg` + 2px `-ring`，左侧 2px `-fg` 竖条
  *
  * 关于「preparing 卡底用专家 bg 的 60%」：token 只有 `-bg`（12% 透明）一档，
  * 没有 color-mix / 第二档透明度可用，再叠一层半透明会引入裸色值。
  * 所以 preparing 与 speaking 共用 `--expert-bg`，靠**圆点尺寸 + 左侧竖条 + 徽标呼吸**区分。
+ * 左侧竖条用 `border-left` 表达，不用 box-shadow（DESIGN §5 全站零投影）。
  */
 const props = withDefaults(
   defineProps<{ guest: Guest; state: AgentState; focus?: string | null }>(),
@@ -79,13 +80,13 @@ const showFocus = computed(
   background: var(--expert-bg);
 }
 
-/* speaking 的左侧 2px 专家色竖条（DESIGN §6.1 唯一允许的 inset bar） */
+/* speaking 的左侧 2px 专家色竖条：用描边表达，不用投影（DESIGN §5） */
 .expert-card[data-state='speaking'] {
-  box-shadow: inset 2px 0 0 var(--expert-fg);
+  border-left: 2px solid var(--expert-fg);
 }
 
 .expert-card__dot {
-  margin-top: var(--sp-2);
+  margin-top: var(--sp-1);
 }
 
 .expert-card__body {
@@ -104,8 +105,7 @@ const showFocus = computed(
 }
 
 .expert-card__name {
-  font-size: var(--fs-md);
-  line-height: var(--lh-md);
+  font-size: var(--fs-base);
   font-weight: var(--fw-medium);
   color: var(--fg-primary);
   overflow-wrap: anywhere;

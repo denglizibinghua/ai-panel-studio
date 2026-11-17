@@ -1,8 +1,8 @@
 /**
- * atoms.css —— 5 个基础件的全部样式（docs/DESIGN.md §7.1）。
+ * atoms.css — 5 个基础件的全部样式（docs/DESIGN.md §6）。
  *
- * 业务组件只允许用这些类 / 组件拼，不允许自己写 <button>/<input> 的视觉。
- * 所有值都来自 tokens.css，这里不出现任何裸色值（rgba() 除外，它们来自 token）。
+ * 层次机制只有一种：表面抬升 + 1px 描边。全站零投影。
+ * 所有值都来自 tokens.css，这里不出现任何裸色值。
  */
 
 /* ── 呼吸：generating / preparing / running 共用 ───────── */
@@ -28,14 +28,15 @@
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  height: 36px;
-  padding: 0 var(--sp-4);
+  height: 32px;
+  padding: 0 var(--sp-3);
   border: 1px solid transparent;
   border-radius: var(--r-md);
   font-family: var(--font-ui);
-  font-size: var(--fs-base);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   line-height: 1;
+  letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -45,21 +46,23 @@
 }
 
 .app-btn--sm {
-  height: 28px;
-  padding: 0 var(--sp-3);
-  font-size: var(--fs-sm);
+  height: 26px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
   border-radius: var(--r-sm);
 }
 
+/* 唯一"响"的元素：反白 */
 .app-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--bg-base);
+  color: var(--accent-ink);
+  font-weight: var(--fw-strong);
 }
 
 .app-btn--primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .app-btn--secondary {
@@ -69,7 +72,8 @@
 }
 
 .app-btn--secondary:hover:not(:disabled) {
-  border-color: var(--accent);
+  background: var(--bg-hover);
+  border-color: var(--fg-muted);
 }
 
 .app-btn--ghost {
@@ -93,12 +97,12 @@
 }
 
 .app-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .app-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
 
@@ -113,13 +117,16 @@
 
 /* ── AppCard ───────────────────────────────────────────── */
 .app-card {
-  background: var(--bg-panel);
+  background: var(--bg-raised);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-md);
 }
 
-.app-card--raised {
-  background: var(--bg-raised);
+/* 平铺行：已结束列表用，不抬升，只留上下发丝线 */
+.app-card--flat {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .app-card--padded {
@@ -131,46 +138,46 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-  height: 22px;
+  height: 20px;
   padding: 0 var(--sp-2);
   border: 1px solid var(--line-subtle);
-  border-radius: var(--r-sm);
-  background: var(--bg-raised);
+  border-radius: var(--r-xs);
+  background: transparent;
   color: var(--fg-secondary);
   font-size: var(--fs-xs);
-  line-height: var(--lh-xs);
+  line-height: 1;
   font-weight: var(--fw-medium);
   white-space: nowrap;
 }
 
 .app-badge--info {
-  background: var(--accent-bg);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--accent-quiet);
+  border-color: transparent;
+  color: var(--fg-primary);
 }
 
 .app-badge--success {
-  background: var(--bg-raised);
-  border-color: var(--line-strong);
+  background: var(--success-bg);
+  border-color: transparent;
   color: var(--success);
 }
 
 .app-badge--warn {
-  background: var(--bg-raised);
-  border-color: var(--line-strong);
+  background: var(--warn-bg);
+  border-color: transparent;
   color: var(--warn);
 }
 
 .app-badge--danger {
   background: var(--danger-bg);
-  border-color: var(--danger-ring);
+  border-color: transparent;
   color: var(--danger);
 }
 
 /* expert 变体的三个变量由 expert-colors.ts 注入 */
 .app-badge--expert {
   background: var(--expert-bg, var(--bg-raised));
-  border-color: var(--expert-ring, var(--line-strong));
+  border-color: transparent;
   color: var(--expert-fg, var(--fg-secondary));
 }
 
@@ -196,17 +203,22 @@
   transition: all var(--dur-base) var(--ease);
 }
 
+/* 6px 内芯 + 2px 外圈 = 10px 盒；外圈用 border，不用投影 */
 .app-status-dot--preparing {
+  width: 10px;
+  height: 10px;
   background: var(--expert-fg, var(--warn));
-  box-shadow: 0 0 0 2px var(--expert-ring, transparent);
+  background-clip: padding-box;
+  border: 2px solid var(--expert-ring, transparent);
   animation: app-breath var(--dur-breath) var(--ease) infinite;
 }
 
 .app-status-dot--speaking {
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
   background: var(--expert-fg, var(--accent));
-  box-shadow: 0 0 0 2px var(--expert-ring, transparent);
+  background-clip: padding-box;
+  border: 2px solid var(--expert-ring, transparent);
 }
 
 /* ── AppPanel ──────────────────────────────────────────── */
@@ -215,7 +227,7 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: var(--bg-panel);
+  background: var(--bg-surface);
   border: 1px solid var(--line-subtle);
   border-radius: var(--r-lg);
   overflow: hidden;
@@ -227,16 +239,17 @@
   justify-content: space-between;
   gap: var(--sp-2);
   flex: none;
-  padding: var(--sp-3) var(--sp-4);
+  height: 40px;
+  padding: 0 var(--sp-4);
   border-bottom: 1px solid var(--line-subtle);
 }
 
 .app-panel__title {
   margin: 0;
-  font-size: var(--fs-sm);
-  line-height: var(--lh-sm);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
   font-weight: var(--fw-strong);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-micro);
   text-transform: uppercase;
   color: var(--fg-secondary);
 }
@@ -266,8 +279,8 @@
 
 .app-empty__title {
   margin: 0;
-  font-size: var(--fs-base);
-  line-height: var(--lh-base);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   font-weight: var(--fw-medium);
   color: var(--fg-secondary);
 }

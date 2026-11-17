@@ -19,14 +19,14 @@ import {
 import type { DiscussionStatus } from '@ai-panel/shared';
 
 /**
- * 演播厅（docs/SESSION_MAP.md §S7 · docs/DESIGN.md §8）。
+ * 演播厅（docs/DESIGN.md §7 / §10，SESSION_MAP §S7）。
  *
  * 布局纪律（上一版就是死在这里）：
- * 1. 两层壳：.studio-shell（容器所在）> .studio（栅格所在）。
+ * 1. 三层：.studio-shell（容器）> .studio-frame（页框）> .studio（栅格）。
  * 2. container-type 只在 .studio-shell 上；.studio 自己的栅格变化一律 @media。
- * 3. 页面永不滚动：.studio-shell 固定 100dvh + overflow hidden，滚动只发生在面板 body。
- * 4. ≥1800px 用 --stage-max 居中：舞台是阅读区，行宽超过 ~90 字中文会失去可读性，
- *    而 v1 没有第 4 栏的内容，加栏只会摊薄密度。
+ * 3. 页框与首页/确认页同源：max-width 90rem + padding-inline 24/16 —— 三页左边缘同一条线。
+ * 4. 页面永不滚动：shell 固定 100dvh + overflow hidden，滚动只发生在面板 body。
+ * 5. 左右栏不留死区：左栏底部有收口信息条，右栏是「简报」（进展 / 专家 / 共识 / 分歧）。
  */
 const props = defineProps<{ id: string }>();
 
@@ -73,14 +73,28 @@ const canCancel = computed(
     status.value === 'running',
 );
 
+/** AC-1.13：专家发言上限 20 条；主持人开场 / 追问 / 总结不计入这个数。 */
+const EXPERT_TURN_CAP = 20;
+
 const displayedTurns = computed(() => (qaState.value === 'empty' ? [] : mockTurns));
 const consensusPoints = computed(() => (qaState.value === 'empty' ? [] : mockConsensus));
 const divergencePoints = computed(() => (qaState.value === 'empty' ? [] : mockDivergence));
 
+/**
+ * 与 server `countExpertTurns()` 同口径：只数专家（role='expert'）的发言。
+ * 简报的进度条和底部运输条都用它；用 `displayedTurns.length` 会把主持人开场、
+ * 每 4 条一次的追问和结束总结算进去（真实一场约 27 条，除 20 会得出 27/20）。
+ */
+const expertTurnCount = computed(() => {
+  const expertIds = new Set(
+    mockRoster.filter((guest) => guest.role === 'expert').map((guest) => guest.id),
+  );
+  return displayedTurns.value.filter((turn) => expertIds.has(turn.guest_id)).length;
+});
+
 /* ── 响应式状态 ──────────────────────────────────────────
  * 断点判断 100% 在 CSS：@media 改 .studio 自己的栅格，@container 改面板内部。
- * JS 绝不读视口 —— Playwright 的视口模拟下 MediaQueryList 的 change 事件不保证派发，
- * 任何「JS 媒体查询分支」在 E2E 里都会冻结成挂载时的值，栅格已变单栏而渲染分支没变。
+ * JS 绝不读视口 —— Playwright 的视口模拟下 MediaQueryList 的 change 事件不保证派发。
  * 这里只留两个纯 UI ref：当前标签、右栏抽屉开没开。 */
 type TabKey = 'roster' | 'stage' | 'insights';
 interface TabDef {
@@ -91,7 +105,7 @@ interface TabDef {
 const TABS: readonly TabDef[] = [
   { key: 'roster', label: '阵容' },
   { key: 'stage', label: '现场' },
-  { key: 'insights', label: '共识' },
+  { key: 'insights', label: '简报' },
 ];
 
 const activeTab = ref<TabKey>('stage');
@@ -125,107 +139,124 @@ function retry(): void {
 
 <template>
   <div class="studio-shell">
-    <div class="studio">
-      <div class="studio__header">
-        <HostBar
-          :topic="discussion?.topic ?? ''"
-          :expert-count="discussion?.expert_count ?? 0"
-          :status="status"
-          :drawer-open="drawerOpen"
-          :can-toggle-drawer="true"
-          @toggle-drawer="toggleDrawer"
-          @exit="exitStudio"
+    <div class="studio-frame">
+      <div class="studio">
+        <div class="studio__header">
+          <HostBar
+            :topic="discussion?.topic ?? ''"
+            :expert-count="discussion?.expert_count ?? 0"
+            :status="status"
+            :drawer-open="drawerOpen"
+            :can-toggle-drawer="true"
+            @toggle-drawer="toggleDrawer"
+            @exit="exitStudio"
+          />
+
+          <div class="studio__tabs" role="tablist" aria-label="演播厅区域">
+            <AppButton
+              v-for="tab in TABS"
+              :key="tab.key"
+              size="sm"
+              :variant="activeTab === tab.key ? 'primary' : 'ghost'"
+              role="tab"
+              :aria-selected="activeTab === tab.key"
+              @click="selectTab(tab.key)"
+            >
+              {{ tab.label }}
+            </AppButton>
+          </div>
+        </div>
+
+        <RosterPanel
+          class="studio__roster"
+          :class="{ 'studio__roster--active': activeTab === 'roster' }"
+          :guests="mockRoster"
+          :status-map="mockAgentStatus"
         />
 
-        <div class="studio__tabs" role="tablist" aria-label="演播厅区域">
-          <AppButton
-            v-for="tab in TABS"
-            :key="tab.key"
-            size="sm"
-            :variant="activeTab === tab.key ? 'primary' : 'ghost'"
-            role="tab"
-            :aria-selected="activeTab === tab.key"
-            @click="selectTab(tab.key)"
-          >
-            {{ tab.label }}
-          </AppButton>
-        </div>
-      </div>
-
-      <RosterPanel
-        class="studio__roster"
-        :class="{ 'studio__roster--active': activeTab === 'roster' }"
-        :guests="mockRoster"
-        :status-map="mockAgentStatus"
-      />
-
-      <TranscriptFeed
-        v-if="qaState !== 'failed'"
-        class="studio__stage"
-        :class="{ 'studio__stage--active': activeTab === 'stage' }"
-        :turns="displayedTurns"
-        :guests="mockRoster"
-      />
-      <AppPanel
-        v-else
-        class="studio__stage"
-        :class="{ 'studio__stage--active': activeTab === 'stage' }"
-        title="现场"
-        scrollable
-      >
-        <AppEmpty
-          class="studio__failed"
-          title="本场讨论失败"
-          hint="可以重新加入本场讨论"
-        >
-          <AppButton variant="secondary" size="sm" @click="retry">重试</AppButton>
-        </AppEmpty>
-      </AppPanel>
-
-      <div
-        class="studio__insights"
-        :class="{
-          'studio__insights--open': drawerOpen,
-          'studio__insights--active': activeTab === 'insights',
-        }"
-      >
-        <ConsensusBoard
-          :consensus="consensusPoints"
-          :divergence="divergencePoints"
+        <TranscriptFeed
+          v-if="qaState !== 'failed'"
+          class="studio__stage"
+          :class="{ 'studio__stage--active': activeTab === 'stage' }"
+          :turns="displayedTurns"
           :guests="mockRoster"
         />
-      </div>
-
-      <div
-        v-if="drawerOpen"
-        class="drawer-scrim"
-        aria-hidden="true"
-        @click="closeDrawer"
-      />
-
-      <div class="studio__transport">
-        <p class="transport__meta">第 {{ displayedTurns.length }} / 20 条 · {{ statusLabel }}</p>
-        <AppButton
-          variant="danger"
-          size="sm"
-          :disabled="!canCancel"
-          @click="cancelDiscussion"
+        <AppPanel
+          v-else
+          class="studio__stage"
+          :class="{ 'studio__stage--active': activeTab === 'stage' }"
+          title="现场"
+          scrollable
         >
-          取消讨论
-        </AppButton>
+          <AppEmpty
+            class="studio__failed"
+            title="本场讨论失败"
+            hint="可以重新加入本场讨论"
+          >
+            <AppButton variant="secondary" size="sm" @click="retry">重试</AppButton>
+          </AppEmpty>
+        </AppPanel>
+
+        <div
+          class="studio__insights"
+          :class="{
+            'studio__insights--open': drawerOpen,
+            'studio__insights--active': activeTab === 'insights',
+          }"
+        >
+          <ConsensusBoard
+            :consensus="consensusPoints"
+            :divergence="divergencePoints"
+            :guests="mockRoster"
+            :status-map="mockAgentStatus"
+            :turns="displayedTurns"
+            :expert-turns="expertTurnCount"
+            :total-turns="EXPERT_TURN_CAP"
+            :status-label="statusLabel"
+          />
+        </div>
+
+        <div
+          v-if="drawerOpen"
+          class="drawer-scrim"
+          aria-hidden="true"
+          @click="closeDrawer"
+        />
+
+        <div class="studio__transport">
+          <p class="transport__meta">
+            {{ expertTurnCount }} / {{ EXPERT_TURN_CAP }} 条专家发言 · {{ statusLabel }}
+          </p>
+          <AppButton
+            variant="danger"
+            size="sm"
+            :disabled="!canCancel"
+            @click="cancelDiscussion"
+          >
+            取消讨论
+          </AppButton>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* ── 壳：容器开在这里，栅格在 .studio 上 ────────────────── */
+/* ── 壳：容器查询开在这里；页框在下一层 ─────────────────── */
 .studio-shell {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   container-type: inline-size;
-  background: var(--bg-base);
+  background: var(--bg-canvas);
+}
+
+.studio-frame {
+  height: 100%;
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
 }
 
 .studio {
@@ -238,7 +269,7 @@ function retry(): void {
     'roster stage insights'
     'transport transport transport';
   gap: var(--sp-4);
-  padding: var(--sp-4);
+  padding-block: var(--sp-4) var(--sp-3);
 }
 
 .studio > * {
@@ -249,8 +280,16 @@ function retry(): void {
 .studio__header {
   grid-area: header;
   display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-width: 0;
+  min-height: var(--header-h);
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.studio__header > :first-child {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -262,7 +301,7 @@ function retry(): void {
   grid-area: stage;
 }
 
-/* 右栏外壳：宽屏是普通栅格列；901–1200 变 fixed 抽屉（外壳只做定位，面板自带表面） */
+/* 右栏外壳：宽屏是普通栅格列；901–1200 变 fixed 抽屉 */
 .studio__insights {
   grid-area: insights;
   display: flex;
@@ -289,9 +328,9 @@ function retry(): void {
 .transport__meta {
   margin: 0;
   overflow: hidden;
-  font-size: var(--fs-sm);
-  line-height: var(--lh-sm);
-  color: var(--fg-secondary);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -303,6 +342,7 @@ function retry(): void {
 
 .studio__tabs {
   display: none;
+  flex: none;
 }
 
 /* 抽屉遮罩：默认不存在（display 只由 901–1200 的媒体查询打开） */
@@ -328,6 +368,9 @@ function retry(): void {
     z-index: 2;
     display: none;
     width: min(22rem, 88vw);
+    padding: var(--sp-3);
+    background: var(--bg-canvas);
+    border-left: 1px solid var(--line-subtle);
   }
 
   .studio__insights--open {
@@ -338,7 +381,7 @@ function retry(): void {
     display: block;
     position: fixed;
     inset: 0;
-    background: var(--bg-base);
+    background: var(--bg-canvas);
     opacity: 0.72;
     z-index: 1;
   }
@@ -352,6 +395,12 @@ function retry(): void {
       'header'
       'stage'
       'transport';
+    gap: var(--sp-2);
+  }
+
+  .studio__header {
+    flex-wrap: wrap;
+    padding-bottom: var(--sp-2);
   }
 
   /* 三块内容共用 stage 格，只显示 activeTab 对应的那一块（纯 CSS，不读视口） */
@@ -372,6 +421,7 @@ function retry(): void {
   .studio__insights {
     position: static;
     width: auto;
+    padding: 0;
     border-left: 0;
     background: transparent;
   }
@@ -383,14 +433,7 @@ function retry(): void {
   .studio__tabs {
     display: flex;
     gap: var(--sp-2);
-  }
-}
-
-/* ── ≥1800：舞台封顶并居中，不让正文行长继续拉长 ───────── */
-@media (min-width: 1800px) {
-  .studio {
-    max-width: var(--stage-max);
-    margin-inline: auto;
+    width: 100%;
   }
 }
 </style>

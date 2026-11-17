@@ -6,7 +6,7 @@ import TranscriptItem from './TranscriptItem.vue';
 import type { Guest, Turn } from '@ai-panel/shared';
 
 /**
- * 中栏「现场」（docs/DESIGN.md §8）。
+ * 中栏「现场」（docs/DESIGN.md §7）。
  * 滚动由 AppPanel body 负责；挂载后一次性滚到底（不挂 interval、不 watch）。
  * 背景用 --bg-inset：DESIGN §2.1 把 transcript 区定义为内嵌凹槽，舞台因此比两侧暗一档。
  */
@@ -56,8 +56,9 @@ onMounted(() => {
 }
 
 .transcript-feed__count {
-  font-size: var(--fs-sm);
-  line-height: var(--lh-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }

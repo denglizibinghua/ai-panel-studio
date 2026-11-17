@@ -2,16 +2,32 @@
 import { computed } from 'vue';
 import { RouterLink } from 'vue-router';
 import type { DiscussionStatus } from '@ai-panel/shared';
-import AppCard from '../common/AppCard.vue';
 import AppBadge from '../common/AppBadge.vue';
 import AppButton from '../common/AppButton.vue';
+import AppCard from '../common/AppCard.vue';
+import { expertColorStyle } from '../../styles/expert-colors';
 import type { MockDiscussion } from '../../mock/mock';
 
 /**
- * 首页讨论卡（docs/SESSION_MAP.md §S7 线框）。
- * 状态徽标严格按 DESIGN.md §6.2：cancelled 用删除线，必须与 failed 区分。
+ * 首页讨论行（docs/DESIGN.md §6 列表行 / §10 Don't #1）。
+ *
+ * 两种形态，靠**表面与分隔**区分，不靠颜色：
+ * - active：抬升行（bg-raised + hairline），进行中 / 待开始 / 生成中；
+ * - ended：平铺行（透明 + 上发丝线），已结束 / 失败 / 取消。
+ *
+ * 行内信息顺序固定：标识（专家色点）→ 主文本 → 元信息 → 动作。
  */
-const props = defineProps<{ discussion: MockDiscussion }>();
+const props = withDefaults(
+  defineProps<{
+    discussion: MockDiscussion;
+    variant?: 'active' | 'ended';
+    guestColorIds?: readonly string[];
+  }>(),
+  {
+    variant: 'active',
+    guestColorIds: () => [],
+  },
+);
 
 type BadgeTone = 'neutral' | 'info' | 'success' | 'warn' | 'danger';
 
@@ -25,7 +41,7 @@ interface StatusView {
 
 const STATUS_VIEW: Record<DiscussionStatus, StatusView> = {
   draft: { label: '待生成', tone: 'neutral', dot: false, breathing: false, lineThrough: false },
-  generating: { label: '生成中', tone: 'info', dot: false, breathing: true, lineThrough: false },
+  generating: { label: '生成中', tone: 'warn', dot: false, breathing: true, lineThrough: false },
   ready: { label: '待开始', tone: 'info', dot: false, breathing: false, lineThrough: false },
   running: { label: '进行中', tone: 'success', dot: true, breathing: true, lineThrough: false },
   finished: { label: '已结束', tone: 'neutral', dot: false, breathing: false, lineThrough: false },
@@ -78,53 +94,80 @@ const updatedLabel = computed(() => `更新于 ${formatRelative(props.discussion
 </script>
 
 <template>
-  <AppCard raised padded class="discussion-card">
-    <div class="discussion-card__body">
-      <div class="discussion-card__top">
-        <h3 class="discussion-card__topic">{{ discussion.topic }}</h3>
-        <div class="discussion-card__badges">
-          <AppBadge tone="neutral">{{ discussion.guest_count }} 位嘉宾</AppBadge>
-          <AppBadge
-            :class="[
-              'discussion-card__status',
-              { 'discussion-card__status--cancelled': statusView.lineThrough },
-            ]"
-            :tone="statusView.tone"
-            :dot="statusView.dot"
-            :breathing="statusView.breathing"
-          >
-            {{ statusView.label }}
-          </AppBadge>
-        </div>
-      </div>
+  <AppCard
+    :raised="variant === 'active'"
+    :flat="variant === 'ended'"
+    padded
+    class="dcard"
+    :class="`dcard--${variant}`"
+  >
+    <div class="dcard__head">
+      <h3 class="dcard__topic">{{ discussion.topic }}</h3>
 
-      <p v-if="discussion.summary_text" class="discussion-card__summary">
-        {{ discussion.summary_text }}
-      </p>
-
-      <div class="discussion-card__bottom">
-        <span class="discussion-card__meta">{{ updatedLabel }}</span>
-        <RouterLink v-slot="{ navigate }" :to="targetRoute" custom>
-          <AppButton size="sm" variant="secondary" @click="navigate">{{ actionLabel }}</AppButton>
-        </RouterLink>
+      <div class="dcard__meta">
+        <span v-if="guestColorIds.length" class="dcard__dots" aria-hidden="true">
+          <span
+            v-for="colorId in guestColorIds"
+            :key="colorId"
+            class="dcard__dot"
+            :style="expertColorStyle(colorId)"
+          />
+        </span>
+        <span class="dcard__count">{{ discussion.guest_count }} 位嘉宾</span>
+        <AppBadge
+          :class="{ 'dcard__status--cancelled': statusView.lineThrough }"
+          :tone="statusView.tone"
+          :dot="statusView.dot"
+          :breathing="statusView.breathing"
+        >
+          {{ statusView.label }}
+        </AppBadge>
       </div>
+    </div>
+
+    <p v-if="discussion.summary_text" class="dcard__summary">
+      {{ discussion.summary_text }}
+    </p>
+
+    <div class="dcard__foot">
+      <span class="dcard__time">{{ updatedLabel }}</span>
+
+      <RouterLink v-slot="{ navigate }" :to="targetRoute" custom>
+        <AppButton
+          size="sm"
+          :variant="variant === 'active' ? 'secondary' : 'ghost'"
+          @click="navigate"
+        >
+          {{ actionLabel }}
+        </AppButton>
+      </RouterLink>
     </div>
   </AppCard>
 </template>
 
 <style scoped>
-.discussion-card {
+.dcard {
   container-type: inline-size;
-}
-
-.discussion-card__body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   min-width: 0;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
-.discussion-card__top {
+.dcard--active:hover {
+  background: var(--bg-hover);
+  border-color: var(--line-strong);
+}
+
+.dcard--ended {
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--line-subtle);
+}
+
+.dcard__head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -132,7 +175,7 @@ const updatedLabel = computed(() => `更新于 ${formatRelative(props.discussion
   min-width: 0;
 }
 
-.discussion-card__topic {
+.dcard__topic {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
@@ -147,18 +190,16 @@ const updatedLabel = computed(() => `更新于 ${formatRelative(props.discussion
   color: var(--fg-primary);
 }
 
-.discussion-card__badges {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
+.dcard--ended .dcard__topic {
+  font-weight: var(--fw-regular);
+  color: var(--fg-secondary);
 }
 
-.discussion-card__status--cancelled {
+.dcard__status--cancelled {
   text-decoration: line-through;
 }
 
-.discussion-card__summary {
+.dcard__summary {
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -168,25 +209,67 @@ const updatedLabel = computed(() => `更新于 ${formatRelative(props.discussion
   color: var(--fg-secondary);
 }
 
-.discussion-card__bottom {
+.dcard--ended .dcard__summary {
+  color: var(--fg-muted);
+}
+
+.dcard__foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
+  min-width: 0;
+  margin-top: var(--sp-1);
 }
 
-.discussion-card__meta {
+.dcard__meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.dcard__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: none;
+}
+
+.dcard__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--expert-fg, var(--fg-muted));
+}
+
+.dcard__count,
+.dcard__time {
   font-size: var(--fs-xs);
   line-height: var(--lh-xs);
   color: var(--fg-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 容器查询只改后代（DESIGN.md §8：容器自身布局不能用 @container） */
-@container (max-width: 20rem) {
-  .discussion-card__bottom {
+/* 容器查询只改后代：行被压窄时把动作折到下一行 */
+@container (max-width: 30rem) {
+  .dcard__foot {
+    flex-wrap: wrap;
+    row-gap: var(--sp-2);
+  }
+}
+
+/* 窄行（手机）把状态组折到标题下面，避免标题与徽标互相挤压 */
+@container (max-width: 26rem) {
+  .dcard__head {
     flex-direction: column;
     align-items: flex-start;
     gap: var(--sp-2);
+  }
+
+  .dcard__meta {
+    width: 100%;
   }
 }
 </style>

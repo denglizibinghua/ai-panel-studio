@@ -9,8 +9,9 @@ import PageShell from '../components/layout/PageShell.vue';
 import { mockRoster } from '../mock/mock';
 
 /**
- * 确认本场阵容（docs/SESSION_MAP.md §S7）。
+ * 确认本场阵容（docs/DESIGN.md §7 / §10，SESSION_MAP §S7）。
  *
+ * 与首页同一页框、同一页头高度、同一标题字号阶（xl / sm）。
  * S7 只做壳：不请求、不进 store，名单直接读 mockRoster。
  * `?state=loading|error` 仅用于截图走查，不在界面上暴露。
  */
@@ -59,23 +60,28 @@ function onSelect(guestId: number): void {
 </script>
 
 <template>
-  <PageShell wide>
+  <PageShell>
     <header class="confirm__header">
-      <AppButton variant="ghost" size="sm" @click="goHome">← 返回</AppButton>
-      <div class="confirm__heading">
-        <h1 class="confirm__title">确认本场阵容</h1>
-        <p class="confirm__subtitle">{{ rosterSummary }}</p>
+      <div class="confirm__head-left">
+        <AppButton variant="ghost" size="sm" @click="goHome">← 返回</AppButton>
+        <span class="confirm__rule" aria-hidden="true" />
+        <span class="confirm__crumb">阵容确认</span>
       </div>
+      <span class="confirm__meta">{{ rosterSummary }}</span>
     </header>
 
     <main class="confirm__body">
+      <div class="confirm__lead">
+        <h1 class="confirm__title">确认本场阵容</h1>
+      </div>
+
       <div
         v-if="pageState === 'loading'"
         class="confirm__grid"
         role="status"
         aria-label="阵容生成中"
       >
-        <AppCard v-for="n in 5" :key="n" class="confirm__skeleton" raised padded />
+        <AppCard v-for="n in 5" :key="n" class="confirm__skeleton" />
       </div>
 
       <div v-else-if="pageState === 'error'" class="confirm__error">
@@ -86,9 +92,10 @@ function onSelect(guestId: number): void {
 
       <div v-else class="confirm__grid">
         <GuestCard
-          v-for="guest in roster"
+          v-for="(guest, index) in roster"
           :key="guest.id"
           :guest="guest"
+          :index="index + 1"
           :selected="guest.id === selectedId"
           @select="onSelect"
         />
@@ -96,42 +103,52 @@ function onSelect(guestId: number): void {
     </main>
 
     <footer class="confirm__footer">
-      <AppButton variant="secondary" @click="regenerate">重新生成</AppButton>
-      <AppButton variant="primary" @click="confirmRoster">确认进入演播厅</AppButton>
+      <div class="confirm__actions">
+        <AppButton variant="secondary" @click="regenerate">重新生成</AppButton>
+        <AppButton variant="primary" @click="confirmRoster">确认进入演播厅</AppButton>
+      </div>
     </footer>
   </PageShell>
 </template>
 
 <style scoped>
 .confirm__header {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  flex: none;
-  padding: var(--sp-4) var(--sp-5);
+  justify-content: space-between;
+  gap: var(--sp-4);
+  /* 56px 内容 + 1px 底边（与演播厅同高，见 DESIGN §7） */
+  min-height: calc(var(--header-h) + 1px);
+  border-bottom: 1px solid var(--line-subtle);
 }
 
-.confirm__heading {
+.confirm__head-left {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-3);
+  align-items: center;
+  gap: var(--sp-2);
   min-width: 0;
 }
 
-.confirm__title {
-  margin: 0;
-  font-size: var(--fs-lg);
-  line-height: var(--lh-lg);
-  font-weight: var(--fw-strong);
-  color: var(--fg-primary);
+.confirm__rule {
+  width: 1px;
+  height: 12px;
+  background: var(--line-strong);
 }
 
-.confirm__subtitle {
-  margin: 0;
+.confirm__crumb {
   font-size: var(--fs-sm);
   line-height: var(--lh-sm);
-  color: var(--fg-secondary);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.confirm__meta {
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .confirm__body {
@@ -140,37 +157,77 @@ function onSelect(guestId: number): void {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: var(--sp-5);
+  padding: var(--sp-6) 0;
+  color-scheme: dark;
 }
 
+.confirm__lead {
+  margin-bottom: var(--sp-5);
+}
+
+.confirm__title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  line-height: var(--lh-xl);
+  letter-spacing: var(--track-xl);
+  font-weight: var(--fw-strong);
+  color: var(--fg-primary);
+}
+
+/* 5 张卡 3+2：桌面固定 3 列，宽度收在阅读列内，左边缘与页框一致 */
 .confirm__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-content: start;
   gap: var(--sp-4);
-  /* 5 张卡在宽屏排成 3+2（对齐 SESSION_MAP 线框），不让单张卡片被拉成一条横带 */
   width: 100%;
-  max-width: 66rem;
-  margin-inline: auto;
+  max-width: var(--read-max);
 }
 
 .confirm__skeleton {
-  min-height: 9rem;
-  animation: app-breath var(--dur-breath) var(--ease) infinite;
+  min-height: 10rem;
+  animation: confirm-breath var(--dur-breath) var(--ease) infinite;
 }
 
 .confirm__error {
   display: flex;
-  justify-content: center;
-  padding-top: var(--sp-7);
+  justify-content: flex-start;
 }
 
 .confirm__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-3);
   flex: none;
-  padding: var(--sp-4) var(--sp-5);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: var(--header-h);
   border-top: 1px solid var(--line-subtle);
+}
+
+.confirm__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+@keyframes confirm-breath {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (max-width: 1100px) {
+  .confirm__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .confirm__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

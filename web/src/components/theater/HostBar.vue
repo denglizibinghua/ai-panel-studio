@@ -66,7 +66,7 @@ const statusView = computed(() => STATUS_VIEW[props.status]);
       :aria-expanded="drawerOpen"
       @click="emit('toggle-drawer')"
     >
-      共识 / 分歧
+      简报
     </AppButton>
 
     <AppButton variant="ghost" size="sm" @click="emit('exit')">退出</AppButton>
@@ -78,8 +78,8 @@ const statusView = computed(() => STATUS_VIEW[props.status]);
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+  height: var(--header-h);
   min-width: 0;
-  padding: 0 var(--sp-1);
   container-type: inline-size;
 }
 
@@ -88,8 +88,9 @@ const statusView = computed(() => STATUS_VIEW[props.status]);
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: var(--fs-md);
-  line-height: var(--lh-md);
+  font-size: var(--fs-lg);
+  line-height: var(--lh-lg);
+  letter-spacing: var(--track-lg);
   font-weight: var(--fw-medium);
   color: var(--fg-primary);
   text-overflow: ellipsis;

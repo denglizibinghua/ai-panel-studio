@@ -2,10 +2,9 @@
 import { computed, useId } from 'vue';
 
 /**
- * 单行 / 多行文本输入（S7 新增基础件，docs/DESIGN.md §7.1 的补充）。
+ * 单行 / 多行文本输入（基础件，docs/DESIGN.md §6）。
  *
- * 本 Session atoms.css 冻结，所以基础件的样式留在 SFC 里；
- * 颜色、间距、字号、圆角全部来自 tokens.css。
+ * 颜色、间距、字号、圆角全部来自 tokens.css；焦点环用 `--accent-ring`，不用投影。
  */
 const props = withDefaults(
   defineProps<{
@@ -81,11 +80,11 @@ function onInput(event: Event): void {
 
 .app-input__field {
   width: 100%;
-  height: 36px;
+  height: 32px;
   padding: 0 var(--sp-3);
   background: var(--bg-inset);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--r-sm);
   color: var(--fg-primary);
   font-family: var(--font-ui);
   font-size: var(--fs-base);
@@ -99,13 +98,13 @@ function onInput(event: Event): void {
 
 .app-input__field:focus-visible {
   border-color: var(--accent);
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
 
 .app-input__field--multiline {
   height: auto;
-  min-height: 72px;
+  min-height: 84px;
   padding: var(--sp-2) var(--sp-3);
   resize: none;
   line-height: var(--lh-base);
