@@ -18,3 +18,18 @@ export function getLlmApiKey(): string | null {
 export function isLlmConfigured(): boolean {
   return getLlmApiKey() !== null;
 }
+
+/**
+ * 实际服务模型名。`deepseek-chat` 已经下线，Pro 档目前由 `deepseek-flash` 承接，
+ * 所以默认值就是 flash，并允许用 `DEEPSEEK_MODEL` 覆盖（换账号 / 换档位时不用改代码）。
+ * 落库时以**响应里返回的 model 为准**（见 client.ts），这样服务端改名不会骗过审计表。
+ */
+const DEFAULT_MODEL = 'deepseek-flash';
+
+export function getLlmModel(): string {
+  const model = process.env.DEEPSEEK_MODEL;
+  if (typeof model === 'string' && model.trim().length > 0) {
+    return model.trim();
+  }
+  return DEFAULT_MODEL;
+}

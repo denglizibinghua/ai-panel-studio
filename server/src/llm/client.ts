@@ -1,7 +1,7 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 import type { LlmModule } from '@ai-panel/shared';
 import type { Db } from '../db';
-import { getLlmApiKey } from './config';
+import { getLlmApiKey, getLlmModel } from './config';
 
 /**
  * The single LLM exit for the whole server (AGENTS.md §6.1).
@@ -71,7 +71,6 @@ export class LlmUpstreamError extends LlmError {
   }
 }
 
-const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
 
@@ -101,7 +100,7 @@ function createDefaultTransport(): ChatJsonTransport {
         authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: req.model ?? DEFAULT_MODEL,
+        model: req.model ?? getLlmModel(),
         messages: req.messages,
         response_format: { type: 'json_object' },
         temperature: 0.7,
@@ -188,7 +187,7 @@ export function createDeepSeekClient(
 
   return {
     async complete(req: ChatJsonRequest): Promise<string> {
-      const model = req.model ?? DEFAULT_MODEL;
+      const model = req.model ?? getLlmModel();
       const startedAt = Date.now();
       try {
         const result = await transport(req);

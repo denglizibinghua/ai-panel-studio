@@ -259,6 +259,8 @@ llm_calls 落库：module=guest / model=deepseek-flash / 2331ms
 DB 核对：5 行 guests 全部 locked=0
 ```
 
-这一次证明了 fake 测不到的三件事：DeepSeek 的 JSON mode 请求体合法、`choices[0].message.content` 取法正确、`usage` 字段名对得上。同时暴露一个命名事实——**实际服务方返回的 model 是 `deepseek-flash`，不是我们在请求里写的 `deepseek-chat`**；审计表存的是响应里的真实模型名（`result.model ?? model`），所以这个偏差被如实记录下来了，没有被掩盖。写工作说明时如果要写"用了 V4 Pro"，先确认账号侧这个名字的对应关系。
+这一次证明了 fake 测不到的三件事：DeepSeek 的 JSON mode 请求体合法、`choices[0].message.content` 取法正确、`usage` 字段名对得上。同时暴露一个命名事实——**实际服务方返回的 model 是 `deepseek-flash`，不是我们在请求里写的 `deepseek-chat`**；审计表存的是响应里的真实模型名（`result.model ?? model`），所以这个偏差被如实记录，没有被掩盖。
+
+已核实：`deepseek-chat` 这个型号已经下线，**Pro 档目前由 `deepseek-flash` 承接**。因此默认模型名改成 `deepseek-flash` 并支持 `DEEPSEEK_MODEL` 覆盖 —— 写工作说明时按"实际使用 DeepSeek（当前服务模型 `deepseek-flash`，对应作业文中的 V4 Pro 档）"来写，不要写一个自己证不了的名字。
 
 ---

@@ -63,7 +63,7 @@
 | 数据库 | SQLite 单文件 `server/data/app.db`，迁移在 `server/src/db/migrations/` |
 | 测试 | Vitest（单元/集成）+ Playwright（E2E） |
 | 包管理 | pnpm workspace |
-| 模型 | DeepSeek（OpenAI 兼容接口），Key 只从 `process.env.DEEPSEEK_API_KEY` 读 |
+| 模型 | DeepSeek（OpenAI 兼容接口）。Key 只从 `process.env.DEEPSEEK_API_KEY` 读；模型名从 `process.env.DEEPSEEK_MODEL` 读，默认 `deepseek-flash`（`deepseek-chat` 已下线，Pro 档目前由 flash 承接）。落库以响应返回的 model 为准 |
 
 **已预批准的前端依赖**（`pnpm add` 时不必再问，除此之外仍走 Ask first）：
 `pinia`、`vue-router`、`@playwright/test`。

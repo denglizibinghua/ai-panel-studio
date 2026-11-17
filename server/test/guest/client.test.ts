@@ -68,14 +68,18 @@ describe('createDeepSeekClient audit (llm_calls.success per data-model §2.9)', 
     const transport: ChatJsonTransport = async () => ({ raw: '{"guests":[]}' });
     try {
       const client = createDeepSeekClient({ transport, db });
-      const raw = await client.complete({ ...baseRequest, validate: () => true });
+      const raw = await client.complete({
+        ...baseRequest,
+        model: 'deepseek-flash',
+        validate: () => true,
+      });
       expect(raw).toBe('{"guests":[]}');
 
       const calls = readCalls(db);
       expect(calls).toHaveLength(1);
       expect(calls[0]?.module).toBe('guest');
       expect(calls[0]?.provider).toBe('deepseek');
-      expect(calls[0]?.model).toBe('deepseek-chat');
+      expect(calls[0]?.model).toBe('deepseek-flash');
       expect(calls[0]?.success).toBe(1);
       expect(calls[0]?.error_summary).toBeNull();
       expect(calls[0]?.is_retry).toBe(0);
