@@ -1,0 +1,24 @@
+{
+  "name": "@ai-panel/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./schemas/index.ts",
+  "types": "./schemas/index.ts",
+  "exports": {
+    ".": {
+      "types": "./schemas/index.ts",
+      "default": "./schemas/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

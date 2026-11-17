@@ -1,0 +1,13 @@
+{
+  "name": "ai-panel-studio",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.6.0",
+  "scripts": {
+    "check": "pnpm -C shared build && pnpm -C server build && pnpm -C server test",
+    "test": "pnpm -C server test",
+    "db:migrate": "pnpm -C server db:migrate",
+    "db:seed": "pnpm -C server db:seed",
+    "db:report": "node scripts/db-report.mjs"
+  }
+}
