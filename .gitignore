@@ -1,0 +1,32 @@
+node_modules/
+dist/
+build/
+coverage/
+
+# secrets
+.env
+.env.local
+.env.*.local
+
+# sqlite
+server/data/*.db
+server/data/*.db-journal
+server/data/*.db-wal
+server/data/*.db-shm
+
+# test artifacts
+test-results/
+playwright-report/
+e2e/screenshots/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
+
+# agent scratch
+.omo/
+.sisyphus/
