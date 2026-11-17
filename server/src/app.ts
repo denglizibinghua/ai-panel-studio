@@ -5,6 +5,7 @@ import { isLlmConfigured } from './llm/config';
 import type { ChatJsonClient } from './llm/client';
 import { guestRoutes } from './modules/guest/routes';
 import { confirmRoutes } from './modules/guest/confirm';
+import { discussionRoutes } from './modules/discussion/routes';
 import { EventBus } from './modules/sse/bus';
 import { sseRoutes } from './modules/sse/routes';
 
@@ -54,6 +55,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   app.register(guestRoutes({ llm: options.llm }), { db: () => options.db ?? getDb() });
   app.register(confirmRoutes(bus), { db });
+  app.register(discussionRoutes({ llm: options.llm }), { db, bus });
   app.register(sseRoutes(bus));
 
   return app;
