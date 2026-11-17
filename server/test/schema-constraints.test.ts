@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { llmModuleValues } from '@ai-panel/shared';
 import { createDb, type Db } from '../src/db';
 import { migrate } from '../src/db/migrate';
 
@@ -98,5 +99,27 @@ describe('events uniqueness and foreign keys', () => {
         )
         .run(expertId),
     ).toThrow(/FOREIGN KEY constraint failed/);
+  });
+});
+
+describe('llm_calls.module contract', () => {
+  const insertCall = (module: string) =>
+    db
+      .prepare(
+        `INSERT INTO llm_calls (discussion_id, module, model, duration_ms, success)
+         VALUES (?, ?, 'deepseek-chat', 1, 1)`,
+      )
+      .run(discussionId, module);
+
+  it('shared enum matches data-model §2.9 (no consensus)', () => {
+    expect([...llmModuleValues]).toEqual(['guest', 'ledger', 'turn', 'summary']);
+  });
+
+  it("accepts 'summary' (consensus extraction belongs to summary)", () => {
+    expect(() => insertCall('summary')).not.toThrow();
+  });
+
+  it("rejects 'consensus' (removed from the contract)", () => {
+    expect(() => insertCall('consensus')).toThrow(/CHECK constraint failed/);
   });
 });

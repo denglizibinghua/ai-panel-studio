@@ -111,7 +111,7 @@ export const ledgerParseStatusSchema = z.enum(ledgerParseStatusValues);
 export const ledgerDecisionValues = ['speak', 'summarize', 'force_stop'] as const;
 export const ledgerDecisionSchema = z.enum(ledgerDecisionValues);
 
-export const llmModuleValues = ['guest', 'ledger', 'turn', 'consensus', 'summary'] as const;
+export const llmModuleValues = ['guest', 'ledger', 'turn', 'summary'] as const;
 export const llmModuleSchema = z.enum(llmModuleValues);
 
 export const llmProviderValues = ['deepseek'] as const;

@@ -25,7 +25,7 @@
 | S5 | 调度决策纯函数 | TDD | ledger schema | 先红后绿的 `decide.ts` | `pnpm -C server test -- decide` | 2h |
 | S6 | SSE 事件总线 + confirm | TDD | contracts/events.md | 每讨论一条流 + 序号补发 + 清理 + `publishEphemeral` | 并发 curl + 补发测试 | 3h |
 | S6.5 | 讨论生命周期 + 主循环 | TDD | contracts + `decide` + `publish` | 5 个 REST 端点 + `runner.ts` + 增量提炼器 | `pnpm -C server test -- runner` | 4h |
-| S7 | 三页 + 演播厅布局 | DDD | 本节 ASCII 线框 | HomeView / GuestConfirmView / TheaterView | 9 张截图 + 高度断言 | 4h |
+| S7 | 三页 + 演播厅布局 | DDD | DESIGN.md + 本节线框 | HomeView / GuestConfirmView / TheaterView | 9 张截图 + 一致性 6 问 | 4h |
 | S8 | 状态层接线 | DDD | S7 + events.md | fetch 流 → store → 五面板 | 真跑一场 | 3h |
 | S9 | 收尾与兜底 | TDD | 全部 | 自然语言总结 + 共识定稿 + 失败兜底 | 边界用例 | 2h |
 | S10 | E2E 闭环 | E2E | contracts | 一条完整 Playwright 用例 | `pnpm e2e` | 2h |
@@ -396,10 +396,10 @@ C. 增量提炼器（modules/summary/extract.ts）
 > **三页都要做**：`HomeView`（列表 + 新建表单）、`GuestConfirmView`（确认阵容）、`TheaterView`（演播厅）。
 > 原计划只写 Theater，首页与确认页会掉地上，S10 的 E2E 第 1/3 步直接跑不了。
 
-- **输入**：本节的 ASCII 线框（不要外部图片）+ `docs/SESSION_MAP.md` + `AGENTS.md` §4
-- **允许改**：`web/src/views/**`、`web/src/components/**`、`web/src/styles/**`、`web/src/router/**`、`web/src/mock/**`
-- **技能**：本 Session 必须加载 `impeccable`（视觉品味 / 层级 / 字距 / 动效），否则产出是"能看的后台表单"而不是"演播厅"
-- **验收**：三页各 3 档截图（共 9 张）；`document.scrollingElement.scrollHeight === innerHeight` 在演播厅为 true
+- **输入**：`docs/DESIGN.md`（视觉契约，必读）、`web/src/styles/tokens.css`、`web/src/styles/atoms.css`、本节的 ASCII 线框
+- **允许改**：`web/src/views/**`、`web/src/components/**`（`common/` 只允许**新增**，不得重写已有 5 个基础件）、`web/src/router/**`、`web/src/mock/**`
+- **技能**：本 Session 必须加载 `impeccable`（品味），但**落点必须是 `DESIGN.md` 的 token**（一致）
+- **验收**：9 张截图 + 高度断言 + `grep` 无色值 + 一致性自查 6 问
 
 **线框（文字版，照这个做）**
 
@@ -454,10 +454,19 @@ C. 增量提炼器（modules/summary/extract.ts）
 **S7 开场提示词**
 
 ```
-已读 AGENTS.md。本次执行 S7：三个页面 + 演播厅布局壳，全部用假数据。
-允许改：web/src/views/**, web/src/components/**, web/src/styles/**,
+已读 AGENTS.md 与 docs/DESIGN.md。本次执行 S7：三个页面 + 演播厅布局壳，全部用假数据。
+允许改：web/src/views/**, web/src/components/**（common/ 只可新增，不得重写已有 5 个基础件）,
         web/src/router/**, web/src/mock/**
-不要碰：任何 api/、stores/、server/ 文件。不要接 SSE、不要发请求。
+不要碰：web/src/styles/**（token 已冻结）、任何 api/、stores/、server/ 文件。
+不要接 SSE、不要发请求。
+
+0. 开工前先做三件事，做完先回我一句确认再继续：
+   a. 读 docs/DESIGN.md 全文；
+   b. 读 web/src/styles/tokens.css 与 atoms.css，列出你打算用到的 token；
+   c. 确认 web/src/components/common/ 下已有 AppButton / AppCard / AppBadge / AppPanel / AppEmpty，
+      以及 styles/expert-colors.ts 的 expertColorStyle()。
+   **本轮不允许发明新的色值、字号、间距、圆角**。缺什么就停下来告诉我，不要自己补。
+   所有颜色必须走 var(--…)，所有专家色必须走 expertColorStyle()。
 
 三个页面（按上面线框做）：
 1. HomeView        —— 列表分「进行中 / 已结束」两组 + 新建讨论表单（议题输入 + 人数步进器）
@@ -493,24 +502,35 @@ C. 增量提炼器（modules/summary/extract.ts）
 组件：RosterPanel / ExpertCard / ExpertStatusBadge / TranscriptFeed / TranscriptItem /
 ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
 全部接收 props，不自己发请求。
+**每个业务组件内部只能用 common/ 的 5 个基础件 + var(--…) 拼出来**：
+按钮→AppButton，卡片→AppCard，状态/标签→AppBadge（expert 时传 color_id），
+每一栏→AppPanel，空/失败→AppEmpty。不许自己写 <button> 的样式。
 
 假数据写死在一个 mock.ts：1 位主持 + 4 位专家、10 条发言、2 条共识、2 条分歧。
 
-视觉要求：加载 impeccable 技能，把它做成"演播厅"而不是"后台表单"——
-暗色舞台、专家色块贯穿卡片与 transcript、状态点三态（idle/preparing/speaking）视觉可辨、
-共识与分歧分区明显、留白克制、中文长文本不溢出。
+视觉要求：加载 impeccable 技能提升品味，但**所有落点必须是 DESIGN.md 的 token**。
+目标是"演播厅"而不是"后台表单"：暗色舞台、专家色块贯穿卡片与 transcript、
+状态点三态可辨、共识与分歧分区明显、留白克制、中文长文本不溢出。
+
+交付前必须逐条回答（答不上来说明没做完）：
+  1. grep -rn "#[0-9a-fA-F]\{6\}" web/src/components 的输出是什么？（必须是空）
+  2. 三页的主操作按钮是不是同一个 AppButton variant="primary"？
+  3. 同一个专家在 roster / transcript / 共识区是不是同一组色？（都来自 expertColorStyle）
+  4. 空列表 / 加载中 / 失败 三种状态各自长什么样？是否都用了 AppEmpty / 骨架卡片？
+  5. 有没有任何一处用了 tokens.css 里不存在的变量名？（grep var(-- 后比对）
+  6. prefers-reduced-motion: reduce 下呼吸动画停了吗？
 
 验收：三页各三张截图（1440x900 / 1280x800 / 390x844，共 9 张），
 以及演播厅页控制台执行 document.scrollingElement.scrollHeight === window.innerHeight
 （必须 true，false 说明壳高写错了）。
-做完只汇报：文件清单 + 9 张截图路径 + 那条断言结果 + 你为超宽屏选的方案。
+做完只汇报：文件清单 + 9 张截图路径 + 断言结果 + 上面 6 问的答案 + 超宽屏方案。
 ```
 
 ---
 
 ## S8 · 状态层接线 ｜ DDD
 
-- **输入**：S7 组件 + `contracts/events.md`
+- **输入**：S7 组件 + `contracts/events.md` + `docs/DESIGN.md`（新加的组件也必须用基础件与 token）
 - **允许改**：`web/src/stores/**`、`web/src/api/**`、`web/src/views/TheaterView.vue`
 - **验收**：真跑一场，五个面板都在动；页面 DOM 里搜不到 `"type":` 之类的 JSON 原文
 
@@ -547,7 +567,7 @@ ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
 
 ## S9 · 收尾与兜底 ｜ TDD
 
-- **输入**：全部
+- **输入**：全部 + `docs/DESIGN.md`（SummaryPanel 的三态必须走 token 与 AppEmpty）
 - **允许改**：`server/src/modules/summary/**`、`server/src/modules/turn/**`（仅串联）、`web/src/components/theater/Summary*`
 - **验收**：空 transcript、嘉宾全失败、总结超时，三种边界都有兜底
 

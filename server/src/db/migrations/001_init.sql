@@ -148,7 +148,7 @@ CREATE        INDEX idx_agent_status_state ON agent_status(discussion_id, state)
 CREATE TABLE llm_calls (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   discussion_id     INTEGER REFERENCES discussions(id) ON DELETE CASCADE,
-  module            TEXT    NOT NULL CHECK (module IN ('guest','ledger','turn','consensus','summary')),
+  module            TEXT    NOT NULL CHECK (module IN ('guest','ledger','turn','summary')),
   provider          TEXT    NOT NULL DEFAULT 'deepseek' CHECK (provider IN ('deepseek')),
   model             TEXT    NOT NULL CHECK (length(model) <= 64),
   duration_ms       INTEGER NOT NULL CHECK (duration_ms >= 0),

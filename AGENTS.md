@@ -46,7 +46,8 @@
 3. `specs/001-panel/contracts/` —— 接口与事件协议
 4. `specs/001-panel/data-model.md` —— 表结构与不变量
 5. 本文件 —— 工程约束
-6. 对话 —— 仅当人明确说"覆盖 spec"时生效
+6. `docs/DESIGN.md` —— 视觉契约（前端样式唯一源，优先级同 5）
+7. 对话 —— 仅当人明确说"覆盖 spec"时生效
 
 **发现 spec 与 data-model 冲突：停止写代码 → 输出冲突点 → 等人裁决。**
 
@@ -65,8 +66,11 @@
 | 模型 | DeepSeek（OpenAI 兼容接口），Key 只从 `process.env.DEEPSEEK_API_KEY` 读 |
 
 **已预批准的前端依赖**（`pnpm add` 时不必再问，除此之外仍走 Ask first）：
-`pinia`、`vue-router`、`tailwindcss` v4 + `@tailwindcss/vite`、`@playwright/test`。
-**S7 必须加载 `impeccable` 技能**再做视觉，否则产出会是"后台表单"而不是"演播厅"。
+`pinia`、`vue-router`、`@playwright/test`。
+**Tailwind 不再作为必需项**：样式改由 `tokens.css + atoms.css` 负责（单一源、无需 purge 配置、
+离线可用）。要用 Tailwind 只允许做布局工具类，**不允许用它写颜色/字号/间距的语义值**。
+**S7 必须加载 `impeccable` 技能**做视觉，但最终落点必须是 `docs/DESIGN.md` 定义的 token，
+skill 负责品味，token 负责一致。
 
 ---
 
@@ -86,7 +90,11 @@ server/src/
 shared/schemas/ zod：Guest / Turn / Event / Ledger / Consensus / Health
 web/src/
   views/        HomeView、GuestConfirmView、TheaterView
-  components/   theater/*、guest/*、common/*
+  components/
+    common/     AppButton / AppCard / AppBadge / AppPanel / AppEmpty  ← 唯一基础件
+    theater/    演播厅业务组件
+    guest/      嘉宾卡片等
+  styles/       tokens.css（唯一 token 源）、atoms.css（基础件样式）、expert-colors.ts
   stores/       discussion.ts（五份独立 state，不得合并）
   api/          client.ts + events.ts（fetch + ReadableStream，不用 EventSource）
   mock/         S7 的假数据
@@ -110,6 +118,9 @@ specs/001-panel/
 9. **共识 / 分歧是增量写的**：每 2 轮发言触发一次提炼，写入 `consensus_points` / `divergence_points` 并置 `status='provisional'`；讨论结束时做一次归并，保留项置 `status='final'`。前端按 `updated_seq` 增量渲染，**不整块重刷**。
    （这样既满足"实时更新"，又不会每轮都多打一次模型调用烧额度。）
 10. **线上字段一律 snake_case**：API JSON、SSE payload、zod schema key、DB 列名四者同名，**禁止在中间做 camel↔snake 映射**。契约文件（`contracts/`）是唯一拼写权威。
+11. **前端样式只能引用 `web/src/styles/tokens.css` 的变量**。组件里禁止出现 `#hex` / `rgb()` / `hsl()`，间距只用 `--sp-1..7`。自查：`grep -rn "#[0-9a-fA-F]\{6\}" web/src/components` 必须为空。
+12. **`color_id` → CSS 变量只有一个映射点**：`web/src/styles/expert-colors.ts` 的 `expertColorStyle()`。任何组件不得写 `if (id === 'amber')`，不得维护第二份色表。
+13. **业务组件只能用 `components/common/` 的 5 个基础件拼**；要新样式先扩 `docs/DESIGN.md` + `tokens.css` + `atoms.css`，再写组件。禁止在业务组件里重造按钮/输入框。
 
 ---
 
