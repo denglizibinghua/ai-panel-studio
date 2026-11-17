@@ -7,15 +7,18 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S5` 已完成（`host/decide` 纯函数，10 条测试先红后绿；全仓 52 条）
-- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）、S5 调度决策（无时钟/随机/IO）
-- 下一步：S6 SSE 事件总线 + `guest/confirm.ts`（`server/src/modules/sse/**`）
+- 当前 Session：`S6` 已完成（SSE 总线 + `guest/confirm`，19 条 `test/sse/**` 新增；全仓 71 条）
+- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）、S5 调度决策（无时钟/随机/IO）、S6 SSE 事件总线（按 discussion 隔离、补发 exclusive、心跳清理、`publishEphemeral` 白名单）+ confirm（单事务锁定、逐人 `agent_status`/`agent.status`、`updated_seq` 取事件 seq）
+- 下一步：S6.5 讨论生命周期 + 主循环（`modules/discussion/**`、`turn/runner.ts`、`summary/extract.ts`、`host/interject.ts`）
 - 已知未决：S3 已真调验收（200/2359ms/500 tokens），**S4 的 ledger 尚未真调**（需手动打一次）；
   **stall 计数只在 S4 更新，S5 原样带回**：runner 必须把本轮 `ledger.stall_count` 当 `prev_stall_count` 传入；
   **decide 的 transcript 必须包含主持人 turn**，换人时只看最后一条**专家**发言（否则主持人插一句追问，同一位专家可连说两次）；
-  `confirm` 留 S6；`requestLedger` 的传输错误直接上抛，`run.failed` 归 S6.5 runner；
+  `requestLedger` 的传输错误直接上抛，`run.failed` 归 S6.5 runner；
   `LedgerContext.roster` 只传可发言专家（host 由调用方过滤）；
   **F3 的"主持人追问"** → AC-1.25，实现在 S6.5 的 `host/interject.ts`；
+  **S6 新约束**：`events` 唯一运行时写点仍是 `sse/publish.ts`；`turn.delta` 走 `publish()` 会抛 `TURN_DELTA_NOT_PERSISTED`，
+  只能走 `publishEphemeral()`；`confirm` 在自身事务内复用 `appendEventInTx`，提交后才 `broadcast`；
+  SSE 路由目前只在 `buildApp` 注册，S6.5 增加 `POST /api/discussions/:id/start` 时不要重复建总线；**`publish()` 在已有事务内会抛 `PUBLISH_INSIDE_TRANSACTION`**，runner 的"一笔发言"必须按 confirm 的模式用 `appendEventInTx` + 提交后 `broadcast`；总线在 `preClose` 结束所有 SSE 响应，别改回 `onClose`（会让 Ctrl+C 挂住）；**`guests/generate` 尚未发 `state.generating` / `state.draft`**（S6 只做总线 + confirm），S6.5 接线时补；
   每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---

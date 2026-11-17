@@ -27,7 +27,7 @@
 - [x] S3 · 嘉宾生成与锁定 — 阶段：SDD
 - [x] S4 · 主持人账本 — 阶段：TDD
 - [x] S5 · 调度决策纯函数 — 阶段：TDD
-- [ ] S6 · SSE 事件总线 — 阶段：TDD
+- [x] S6 · SSE 事件总线 — 阶段：TDD
 - [ ] S7 · 演播厅布局 — 阶段：DDD
 - [ ] S8 · 状态层接线 — 阶段：DDD
 - [ ] S9 · 收尾与兜底 — 阶段：TDD
@@ -487,4 +487,100 @@ S5 的测试里 transcript 全由专家发言组成，所以这条永远成立�
 **这是本轮的第二次同类发现**：S4 是"需求没有 AC"，S5 是"约束依赖了一个未来才成立的前提"。共同点是 —— **它们都不是当前代码的错，而是"当前代码在下一阶段的输入下会错"**。所以从 S5 起，收尾多问一句：*这个实现有没有依赖"当前 transcript / 当前名单形态"的假设？下一阶段会不会打破它？*
 
 ---
+
+### S6 · SSE 事件总线 + 嘉宾确认
+
+**阶段**：TDD
+
+**核心 Prompt**：
+
+```
+已读 AGENTS.md。本次执行 S6：SSE 事件总线。允许改：
+server/src/modules/sse/**, server/src/modules/guest/confirm.ts, server/test/sse/**
+输入：specs/001-panel/contracts/events.md
+
+1. bus.ts：Map<discussion_id, Set<subscriber>>，publish / subscribe。
+2. 事件先写 events（discussion_id + seq 自增）再推给同 discussion 的订阅者。
+3. Last-Event-ID 只补 seq > k，补完发 event: caught_up。
+4. 响应头 text/event-stream + no-cache, no-transform + X-Accel-Buffering: no。
+5. 心跳 15s，": ping"，不写 id。
+6. close/error 清理 interval + Set 移除，interval unref。
+7. 无订阅不得中止讨论。
+8. publishEphemeral 只允许 turn.delta，其他抛错。
+9. confirm 单事务：行数校验 → locked=1 → 逐人 agent_status(idle) →
+   逐人 agent.status 事件（updated_seq = 该事件 seq，不许 0）→ state.ready。
+   行数不符 409 GUEST_COUNT_MISMATCH。
+```
+
+**意图**：把"事件落库"和"实时推送"合并成唯一入口，同时守住两条容易在下一轮被破坏的边界：`turn.delta` 不落库、推送必须发生在 COMMIT 之后。confirm 是 S8 订阅初始状态的来源，`updated_seq = 0` 会让专家小窗从第一帧起就是空的。
+
+**卡点 / 实现决定**：
+
+1. **delta 污染 seq 是主动拦的，不是靠记性**：`publish()` 对 `turn.delta` 直接抛 `TURN_DELTA_NOT_PERSISTED`，只有 `publishEphemeral()` 能发它；后者白名单写死 `turn.delta`。两向都加了测试，后面 S6.5 想"顺手接上"会立刻红。
+2. **confirm 与总线共用写点**：`appendEventInTx` 在调用方事务里取号 + 插入，confirm 在一个事务内写 5 条 agent.status + 1 条 state.ready；`EventBus.publish` 自己包事务。提交后才 `broadcast`，避免"推了但回滚"。
+3. **补发与实时注册的顺序**：查询 `seq > k`、写回放帧、写 caught_up、加入 Set 全部同步完成（better-sqlite3 同步 + 单线程），中间没有 await，因此不存在回放与实时推交叉的窗口。`caught_up.up_to_seq` 取订阅时刻的 `last_event_seq`，而不是回放最后一条。
+4. **清理**：`close` / `error` / `write` 抛错三条路径都进同一个幂等 `cleanup`；interval 先 clear 再删 Set；空 Set 连带删 Map 键。心跳定时器 `unref()`。
+5. **路由 404 在开流前判定**：未知讨论返回 JSON `DISCUSSION_NOT_FOUND`，不写 SSE 头（AC-3.6）；之后 `reply.hijack()` 交给 `reply.raw`。
+
+**验收**：
+
+```
+$ pnpm -C server test -- sse
+✓ test/sse/confirm.test.ts    (4 tests)
+✓ test/sse/sse-http.test.ts   (2 tests)
+✓ test/sse/bus.test.ts        (12 tests)
+Test Files  3 passed / Tests 19 passed
+
+$ pnpm check
+tsc --noEmit ×2 ✓ → 10 files / 71 tests passed（S5 结束时 52 条）
+```
+
+**五条盯梢逐条对应**：
+
+| 要求 | 落点 / 测试 |
+|---|---|
+| 每位嘉宾一条 agent.status，updated_seq = 事件 seq ≠ 0 | `confirmGuests` 逐人 append 后 upsert；`confirm.test.ts` 断言 5 行 `updated_seq > 0` 且逐行等于对应 `agent.status.seq` |
+| 按 discussion_id 隔离 | `EventBus.subscribers` 的 Map 键；bus 单测 + `sse-http.test.ts` 两个真实 fetch 流并发，断言互不出现对方 payload |
+| Last-Event-ID exclusive | SQL `seq > ?`；k=3 只收到 4,5，`id: 3` 不出现；k=0 全量、k≥last 只发 caught_up |
+| publishEphemeral 白名单 | 非 `turn.delta` 抛 `EPHEMERAL_TYPE_NOT_ALLOWED`；`turn.done` 用例断言不写表、不推帧 |
+| `: ping` 无 id、close 清定时器 | 20ms 心跳测试：先累计 ≥2 次 ping，close 后计数不再增长且 Set 归零 |
+| 额外：delta 不许走 publish | `TURN_DELTA_NOT_PERSISTED`，events 行数与 `last_event_seq` 均为 0 |
+
+**COVERAGE 核对**：F2（generate + confirm）→ ✅；T2（多讨论隔离）→ ✅；T3 服务端完成、S8 `api/events.ts` 仍待做 → 🟡。`sse/` 不再是空目录。
+
+**范围说明**：为注册两条新路由，只改了 `server/src/app.ts`（13 行，构造/注入总线 + register），属于接线必需，未触碰其他模块；另在 `.gitignore` 增加 `server/test/data/`，防止测试库残留被误提交。
+
+**审查补记（Oracle 独立复核，已修）**：
+
+五条底线（逐人 `updated_seq=seq`、讨论隔离、补发 exclusive、ephemeral 白名单、心跳清理）全部通过，confirm 事务与 409 无副作用也确认无误。但复核抓出两个真问题，都已带回归测试修掉：
+
+1. **`publish()` 在调用方事务里会"先推送后提交"（已修）**：better-sqlite3 的嵌套事务只是 SAVEPOINT，`append.immediate()` 并不真正 COMMIT，`broadcast()` 就提前把帧推出去了。外层回滚后 `seq` 被复用 → 客户端拿着 `Last-Event-ID: 1` 永远收不到真正的 seq 1，去重也会误杀。这正是 events.md 明令禁止的"已推送未落库"，而 S6.5 runner 的"一笔发言"必然要把 `turn.started` + `turns` + `turn.done` 包在一个事务里，**不修就必踩**。
+   修法：`publish()` 检测 `db.inTransaction`，直接抛 `PUBLISH_INSIDE_TRANSACTION`，强制调用方走 confirm 的模式（`appendEventInTx` 在事务内、提交后 `broadcast`）。回归测试：事务内 publish → 抛错、events 0 行、`last_event_seq` 仍为 0、订阅者无新帧。
+2. **有 SSE 连接时 `app.close()` 永不返回（已修）**：`SseSink` 只有 `write`/`on`，`closeAll()` 清定时器和 Map 但**不结束响应**，`server.close()` 会一直等活连接；叠加 `onClose` 在 avvio 里 LIFO（Fastify 的 `server.close` 先跑），直播中按 Ctrl+C 直接把进程挂住。
+   修法：`SseSink` 增加可选 `end()`，`closeAll()` 先 end 再清理；钩子从 `onClose` 改为 **`preClose`**（在 `server.close` 之前执行）。回归测试：真实 HTTP 流保持连接时 `app.close()` 2s 内必须 resolve、流收到 EOF、订阅集合归零。
+
+顺带补的（Oracle 合同偏差清单里低成本的几条）：
+
+- `publish()` 增加**类型值校验**：`state.*` 的 `status` 必须等于 type 后缀；`consensus/divergence.added` 只能 `provisional`，`.updated` 只能 `final|dropped`。共享 schema 只按族校验，这一层补上单写点的最后防线。
+- confirm 除了行数，还断言**恰好 1 位 host + `expert_count` 位 expert**（`uq_guests_one_host` 只挡 >1，不挡 0）。
+- SSE 路由 `subscribe()` 包 try/catch：头部已发出后若抛错（如关库中途）主动 `raw.end()`，避免留一个永远空的 200 流。
+- `parseFrames` 从 `src/` 挪到 `test/sse/helpers.ts`，不把测试代码打进生产。
+- 在 `subscribe()` 写明"全同步、中间不得出现 await"的注释，防止未来有人加 await 打穿补发与实时注册的原子性。
+
+仍留作后续（本轮不改，已在 §0 记录风险）：data-model §4.3 的 `SQLITE_CONSTRAINT` 三次重试 + 置 `failed` 未实现（单进程计数器下不可达，且置 failed 属 S6.5 runner 的 `run.failed` 语义）；慢客户端的背压（`write()` 返回 false）暂不处理；`events.payload` 的上限实现为 4096 **字节**，比 DB/共享 schema 的 4096 **字符**更严。
+
+**审查补记（独立复核，判定期）**：
+
+五条底线 + delta 污染防线逐条对上，19 条 sse 测试都是真断言。最亮的一处不是"先提交后推送"这个结论，而是它的**实现方式**：`publish()` 直接检测 `db.inTransaction` 并抛 `PUBLISH_INSIDE_TRANSACTION`，逼调用方改用 `appendEventInTx` + 提交后 `broadcast`。这比"我承诺按顺序写"强一个量级 —— 顺序靠代码结构保证，不靠人记得。
+
+修了两处契约偏差：
+
+1. **SSE 响应头无条件带 `Connection: keep-alive`**。HTTP/1.1 没问题，但 `Connection` 是 hop-by-hop 头，**HTTP/2 明令禁止**（RFC 9113 §8.2.2）。本地 demo 不会碰到，可一旦有人用 h2 终止代理，整条流会被判协议错误。改成按 `request.raw.httpVersionMajor` 判断：只有 1.x 才加。
+2. **`confirm` 对"0 行嘉宾"返回 `INVALID_STATE_TRANSITION`**，而 AC-1.7b 写的是"`guests` 行数 ≠ `expert_count + 1` → 409 `GUEST_COUNT_MISMATCH`"。0 行显然也是行数不符。虽然两者都是 409、测试也不红，但错误码是前端分支依据 —— 错一个码就是错一个 UI 分支。统一到 `GUEST_COUNT_MISMATCH`，消息区分"尚无阵容"和"数量不匹配"。
+
+**教训**：**契约里的边界值要按字面量核对，别按语义直觉。** "0 行"在实现者眼里是"还没准备"，在契约里是"数量不符"。这类偏差永远测试不红（状态码一样），但会在前端表现成一个错误的提示、一条走错的分支。以后写 AC 时，把边界值（0、1、上限、刚好等于）单独列出来，比写"不匹配"这种概括词更省事。
+
+---
+
+
 

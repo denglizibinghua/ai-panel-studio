@@ -13,6 +13,7 @@ server/data/*.db
 server/data/*.db-journal
 server/data/*.db-wal
 server/data/*.db-shm
+server/test/data/
 
 # test artifacts
 test-results/
