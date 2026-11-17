@@ -666,6 +666,17 @@ ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
 - **允许改**：`web/src/stores/**`、`web/src/api/**`、`web/src/views/TheaterView.vue`
 - **验收**：真跑一场，五个面板都在动；页面 DOM 里搜不到 `"type":` 之类的 JSON 原文
 
+**S7.5 之后的增量（S8 必须带上）**
+
+1. 视觉已冻结：本轮只接线，不许新造视觉；落点 `docs/DESIGN.md` **v2.1**。
+2. `ConsensusBoard` 的 `expertTurns` 是**必填** prop，值必须是 `expert_turn_count`（AC-1.13，分母 20），
+   不是 `turns.length` —— 后者含开场/追问/总结，真实一场约 27 条，会显示 `27 / 20`。
+3. 组件里仍 import `MockDiscussion` / `MockAgentStatus`；S8 换成 shared 类型，mock 类型不许进生产路径。
+4. 首页色点：删掉 `HomeView.colorIdsOf()` 里的 mock 循环。二选一（Ask first）：
+   ① 列表载荷加 additive `expert_color_ids`；② 拿不到就隐藏（`DiscussionCard` 已支持空数组）。
+5. 面板标题「简报」只是视觉命名，不参与数据契约；内部的「共识 / 分歧」区块名不变。
+6. `?state=` 开关在本轮改为真实 store 状态，但文件先保留，S11 统一删并重拍截图。
+
 ```
 已读 AGENTS.md。本次执行 S8：把真实数据接进 S7 的壳。
 允许改：web/src/stores/**, web/src/api/**, web/src/views/TheaterView.vue

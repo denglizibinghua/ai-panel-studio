@@ -1,7 +1,12 @@
-# DESIGN.md — 视觉契约
+# DESIGN.md — 视觉契约 · STAGE v2.1
+
+> 品牌代号：**STAGE**（演播厅）
+> 版本：**v2.1** · 2026-11-17（v2.0 落地后按审查结果校正数值与规则，见 §12）
+> 参考源：`design-md/linear.app`（只读一份；不复制品牌名、logo、专有字体）
+> 覆盖范围：方向层 + 值层，整份替换 v1。`web/src/styles/tokens.css` 同步重写。
 
 > **这是前端唯一的样式真相源。** 任何 Session 加页面前先读这里；缺的 token 先补到这里和
-> `web/src/styles/tokens.css`，再写组件。与 `AGENTS.md` §6 的第 11–13 条配套。
+> `tokens.css`，再写组件。与 `AGENTS.md` §6 第 11–13 条配套。
 
 ---
 
@@ -10,193 +15,219 @@
 1. **组件里不出现硬编码色值。** 禁止 `#hex`、`rgb()`、`hsl()`，一律 `var(--…)`。
    自查：`grep -rn "#[0-9a-fA-F]\{6\}" web/src/components` 必须为空。
 2. **间距只用 7 档**：4 / 8 / 12 / 16 / 24 / 32 / 48。没有 20px，没有 5px。
-3. **业务组件只能用 `components/common/` 的 5 个基础件拼**，不许自己写 `<button>` / `<input>` 的样式。
+3. **业务组件只能用 `components/common/` 的基础件拼**（共 7 个，见 §6），不许自己写 `<button>` / `<input>` 的样式。
 
 ---
 
-## 1. 基调
+## 1. 美术方向
 
-暗色演播厅。深底、低饱和、靠**专家色块**和**状态呼吸**提供信息密度，不靠装饰。
+**这是一间深夜的广播控制室，不是一块产品落地页。** 画面几乎全黑，结构只靠 1px 的
+发丝线（hairline）和四级表面抬升撑起来；没有任何投影、渐变、光晕。颜色是有预算的：
+中性灰负责 95% 的面积，唯一"响"的元素是反白的主操作按钮；剩下的彩度全部让给 10 个
+专家——他们的颜色只出现在身份元素上（圆点、姓名前的色条、左竖条、描边），像控制台上
+一排排通道指示灯。层级靠字号跨度和留白，不靠装饰；鼠标移上去只发生两件事：表面亮一级、
+描边亮一档。
 
-- 只有一个主题（暗色），**不做主题切换**（`AGENTS.md` §2 非目标）。
-- 信息层级靠三层背景差 + 文字明度差，不靠边框堆叠。
-- 动效只服务于"状态在变"（说话中、生成中），不做入场动画。
+**必须避免的三条 AI 套路：**
+
+1. 紫蓝渐变发光 + 半透明玻璃卡片（"科技感"贴纸）。
+2. 每个区块都套 16px 圆角大卡 + 悬浮阴影，页面变成一层层浮岛。
+3. 用 emoji / 通用图标堆密度，标题前后加 ✨。「信息密度」不靠图标，靠排版。
 
 ---
 
 ## 2. 色板
 
-### 2.1 基底（6 个层次，不要新增）
+### 2.1 基底与表面（四级抬升，不要新增）
 
 | Token | 值 | 用在哪 |
 |---|---|---|
-| `--bg-base` | `#0b0f14` | 页面底 |
-| `--bg-panel` | `#121821` | 侧栏 / 面板底 |
-| `--bg-raised` | `#1a2230` | 面板上的卡片 |
-| `--bg-inset` | `#0e141b` | 内嵌凹槽（transcript 区） |
-| `--line-subtle` | `rgba(255,255,255,.06)` | 分隔线、卡片描边 |
-| `--line-strong` | `rgba(255,255,255,.12)` | 可交互元素的描边 |
+| `--bg-canvas` | `#070809` | 页面底（近黑，带一点冷调，**不是纯黑**） |
+| `--bg-inset` | `#080A0B` | 内嵌凹槽：transcript 区、输入框 |
+| `--bg-surface` | `#0C0E10` | 面板底（一级抬升） |
+| `--bg-raised` | `#13161A` | 面板上的卡片 / 列表行（二级抬升） |
+| `--bg-hover` | `#1A1E23` | hover 时的表面（三级抬升） |
 
-### 2.2 文字（3 档，不要新增）
+| 线 | 值 | 用在哪 |
+|---|---|---|
+| `--line-subtle` | `#1A1E23` | 卡片、面板、分隔线的默认描边 |
+| `--line-strong` | `#2A3038` | 可交互元素、需要强调的分隔 |
+
+### 2.2 文字（4 档，不要新增）
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--fg-primary` | `#e8edf4` | 正文、姓名、标题 |
-| `--fg-secondary` | `#9aa7b8` | 职业、元信息、次级说明 |
-| `--fg-muted` | `#5d6b7d` | 时间戳、占位、禁用 |
+| `--fg-primary` | `#EEF1F5` | 标题、姓名、正文 |
+| `--fg-secondary` | `#A2ABB7` | 职业、元信息、面板标题 |
+| `--fg-muted` | `#6B7482` | 时间戳、计数、占位 |
+| `--fg-faint` | `#474F5A` | 已结束/禁用、极弱说明 |
 
-### 2.3 语义色
+### 2.3 强调色（全站只有 1 个）
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--accent` | `#6ea8fe` | 主操作、链接、选中 |
-| `--accent-strong` | `#3f7fe0` | 主操作 hover |
-| `--accent-bg` | `rgba(110,168,254,.14)` | 选中底 |
-| `--danger` | `#f26d6d` | 失败、取消、破坏性操作 |
-| `--danger-bg` | `rgba(242,109,109,.14)` | 危险按钮底 |
-| `--success` | `#4ec98a` | finished、LIVE 点 |
-| `--warn` | `#f5b642` | 生成中、停摆提示 |
+| `--accent` | `#F2F4F7` | **反白**。主操作按钮底、焦点环、选中态 |
+| `--accent-hover` | `#FFFFFF` | 主操作 hover |
+| `--accent-ink` | `#070809` | 反白底上的文字 |
+| `--accent-quiet` | `rgba(242,244,247,.10)` | 选中行底（极轻） |
+| `--accent-ring` | `rgba(242,244,247,.55)` | focus-visible 外环 |
 
-### 2.4 专家色（10 个 id × 3 个用途）
+> 强调是**亮度**，不是色相。全站没有第二个彩色强调色。
+> 专家色不得与 `--accent` 出现在同一元素上（主按钮里不出现专家色，专家卡里不出现反白底）。
 
-`guests.color_id` 的取值与 `shared/schemas/enums.ts` 的 `colorIdValues` 一一对应。
-每个 id 必须同时提供三档，缺一档算契约破坏：
+### 2.4 语义色
 
-| 后缀 | 用途 | 示例（amber） |
+| Token | 值 | 用途 |
 |---|---|---|
-| `-fg` | 姓名、圆点、图标等前景 | `#f5b642` |
-| `-bg` | 卡片底、发言气泡底（12% 透明度） | `rgba(245,182,66,.12)` |
-| `-ring` | 描边、状态外圈（38% 透明度） | `rgba(245,182,66,.38)` |
+| `--success` | `#4AC08A` | `running` / LIVE 点、正常结束 |
+| `--success-bg` | `rgba(74,192,138,.12)` | success 徽标底 |
+| `--warn` | `#E8B45A` | `generating` / 停摆提示 |
+| `--warn-bg` | `rgba(232,180,90,.12)` | warn 徽标底 |
+| `--danger` | `#F0716C` | 失败、取消、破坏性操作 |
+| `--danger-bg` | `rgba(240,113,108,.12)` | 危险按钮底 |
+| `--danger-ring` | `rgba(240,113,108,.36)` | 危险按钮描边 |
+
+### 2.5 专家色（10 个 id × 3 个用途）
+
+`guests.color_id` 与 `shared/schemas/enums.ts` 的 `colorIdValues` 一一对应。
+命名**不许改**（`expert-colors.ts` 依赖）：`--c-<id>-fg` / `-bg` / `-ring`。
+
+| 后缀 | 用途 | 透明度 |
+|---|---|---|
+| `-fg` | 姓名、圆点、左竖条、轮廓 | 实色 |
+| `-bg` | 卡片底、发言底 | 12% |
+| `-ring` | 描边、状态外圈 | 38% |
 
 | id | `-fg` | 语义倾向（只用于选角，不用于样式判断） |
 |---|---|---|
-| `amber` | `#f5b642` | 中立主持 |
-| `rose` | `#f2708f` | 强硬 / 反对 |
-| `sky` | `#5aa9f0` | 理性 / 分析 |
-| `emerald` | `#3fbf87` | 务实 / 落地 |
-| `violet` | `#a58bf5` | 理论 / 学术 |
-| `orange` | `#f2884b` | 产业 / 一线 |
-| `teal` | `#35bfbf` | 数据 / 研究 |
-| `lime` | `#a3cc48` | 增长 / 机会 |
-| `indigo` | `#7c86f0` | 制度 / 政策 |
-| `fuchsia` | `#e067c9` | 创意 / 传播 |
+| `amber` | `#F5B23F` | 中立主持 |
+| `rose` | `#F2708F` | 强硬 / 反对 |
+| `sky` | `#5AA9F0` | 理性 / 分析 |
+| `emerald` | `#34B87C` | 务实 / 落地 |
+| `violet` | `#A58BF5` | 理论 / 学术 |
+| `orange` | `#F2884B` | 产业 / 一线 |
+| `teal` | `#35BFBF` | 数据 / 研究 |
+| `lime` | `#A3CC48` | 增长 / 机会 |
+| `indigo` | `#7C86F0` | 制度 / 政策 |
+| `fuchsia` | `#E067C9` | 创意 / 传播 |
 
 > **唯一映射点**：`web/src/styles/expert-colors.ts` 的 `expertColorStyle(id)`。
-> 组件里禁止 `if (id === 'amber')`，禁止自己维护第二份色表。
+> 组件里禁止 `if (id === 'amber')`，禁止维护第二份色表。
+> 专家色**只出现在**：圆点、姓名、左竖条、描边、底色。不做大面积背景、不做渐变。
 
 ---
 
-## 3. 排版
+## 3. 字号阶（7 档，每档写死用途）
 
-- 字体：`--font-ui`（Inter → PingFang SC → 微软雅黑 → system-ui）。中文优先 PingFang/雅黑，
-  **不要引入外部字体文件**（离线可用是第一原则）。
-- 数字与代码：`--font-mono`。
+字体：`--font-ui`（Inter → PingFang SC → 微软雅黑 → system-ui），**不引外部字体文件**。
+数字/计数：`--font-mono`。字重只用 400 / 500 / 600。
 
-| Token | 字号 / 行高 | 用途 |
+| Token | 字号 / 行高 | 用途（不许挪作他用） |
 |---|---|---|
-| `--fs-xs` | 12 / 1.5 | 时间戳、徽标 |
-| `--fs-sm` | 13 / 1.6 | 元信息、辅助文案 |
-| `--fs-base` | 14 / 1.7 | 正文默认（transcript、表单） |
-| `--fs-md` | 16 / 1.6 | 姓名、卡片标题 |
-| `--fs-lg` | 20 / 1.4 | 页面区块标题 |
-| `--fs-xl` | 28 / 1.25 | 首页主标题 |
+| `--fs-micro` | 11 / 1.4 · `+0.08em` · 大写 | 面板标题、eyebrow、分组标签 |
+| `--fs-xs` | 12 / 1.5 | 徽标、时间戳、计数 |
+| `--fs-sm` | 13 / 1.65 | 职业、元信息、辅助说明、按钮文字 |
+| `--fs-base` | 14 / 1.75 | 正文：transcript、表单、列表摘要 |
+| `--fs-md` | 16 / 1.5 | 姓名、卡片标题、议题 |
+| `--fs-lg` | 20 / 1.35 · `-0.01em` | 区块标题（进行中 / 已结束 / 演播厅议题） |
+| `--fs-xl` | `clamp(24px, 2.4vw, 30px)` / 1.2 · `-0.02em` | 页面主标题（三页各一个，位置一致） |
 
-字重只用 400 / 500 / 600（`--fw-regular` / `--fw-medium` / `--fw-strong`）。
-**中文不用 700 以上**（在 Windows 上会糊）。
-
----
-
-## 4. 间距 / 圆角 / 描边
-
-- 间距：`--sp-1` 4 / `--sp-2` 8 / `--sp-3` 12 / `--sp-4` 16 / `--sp-5` 24 / `--sp-6` 32 / `--sp-7` 48。
-- 圆角：`--r-sm` 6（徽标、小按钮）/ `--r-md` 10（按钮、卡片）/ `--r-lg` 14（面板）/ `--r-full` 999（圆点）。
-- 描边固定 1px。**不要用 box-shadow 做层次**，用背景明度差；只有 `speaking` 状态允许发光。
+> v1 的病根是"6 档只用 3 档"：正文、姓名、标题全是 14–16px，页面因此发平。
+> v2 强制：**页面有 xl，区块有 lg，卡片有 md，正文 base，元信息 sm/xs，标签 micro** —— 六个层级各就各位。
 
 ---
 
-## 5. 动效
+## 4. 间距节奏（组内 8/12，区块间 32/48）
 
-| Token | 值 | 用途 |
+| 层级 | 用哪一档 | 例子 |
 |---|---|---|
-| `--dur-fast` | 150ms | hover、颜色切换 |
-| `--dur-base` | 250ms | 展开、淡入 |
-| `--ease` | `cubic-bezier(.2,.7,.3,1)` | 全局缓动 |
+| 组内（元件之间） | `--sp-1` 4 / `--sp-2` 8 | 圆点与姓名、姓名与徽标、标签与值 |
+| 卡片/面板内边距 | `--sp-3` 12 / `--sp-4` 16 | 列表行、卡片 padding |
+| 列表项之间 | `--sp-2` 8 / `--sp-3` 12 | 同组卡片间距 |
+| 区块之间 | `--sp-6` 32 / `--sp-7` 48 | 进行中 ↔ 已结束；页头 ↔ 内容 |
 
-只有两种动效是必须的：
-1. `generating` / `preparing` / `running` 的 **呼吸**（opacity 或 ring 缩放，1.8s 循环）。
-2. `turn.delta` 到达时的光标闪烁。
+**规则**：同一层级内只允许 8/12，跨层级才允许 24 以上。**反对**用 16px 间距把一切都拉开——
+那会得到 v1 的"到处一样松"。
 
-**必须尊重 `prefers-reduced-motion: reduce`**：所有循环动画在该媒体查询下停掉。
+页面 gutter 固定 `--page-gutter`（桌面 24 / 窄屏 16），三页一致。
 
 ---
 
-## 6. 状态语义（这套必须三处一致：roster / transcript / 顶部状态条）
+## 5. 层次机制：只用描边（唯一）
 
-### 6.1 专家状态（`agent_status.state`）
+**三选一：v2 只选「描边 + 表面抬升」，全站零投影。**
 
-| 状态 | 圆点 | 卡片底 | 其他 |
+- 层级 = 表面亮一级（canvas → inset / surface → raised → hover）+ 1px hairline。
+- `box-shadow` 一律禁止（含 inset）。`speaking` 的状态条改用 `border-left: 2px var(--expert-fg)`。
+- 圆角**不承担层级**，只承担形状身份：徽标 4 / 输入与 sm 按钮 6 / 按钮与卡片 8 / 面板 12 / 圆点 full。
+- 只有一个例外：`focus-visible` 的 2px 外环（`--accent-ring`），它是可访问性要求，不是装饰。
+
+---
+
+## 6. 组件规则
+
+| 组件 | 形态 |
+|---|---|
+| **AppButton** | 高 32（sm 26），圆角 8（sm 6），字号 13 / 字重 500，横向 padding 12（sm 8）。`primary` = 反白底 + 近黑字；`secondary` = raised 底 + `line-strong` 描边；`ghost` = 透明，hover 才出底；`danger` = danger 底 + ring 描边。全站只有 primary 是"响"的。 |
+| **AppCard** | `bg-raised` + 1px `line-subtle` + 圆角 8 + padding 16。平铺行变体（`flat`）= 透明底 + 只有上下 hairline，用于"已结束"。 |
+| **AppBadge** | 高 20，圆角 4，padding 0 8，字号 12。默认透明底 + hairline；`info` 用 `accent-quiet` + primary 字；`success` / `warn` / `danger` 只用文字色 + 同色 10% 底。`expert` 用 `--expert-*`。 |
+| **AppPanel** | `bg-surface` + 1px `line-subtle` + 圆角 12。头高 40，padding 0 16，标题 `--fs-micro` 大写 + `+0.08em`，右侧 actions 用 `--fs-xs`。body padding 12。 |
+| **AppInput** | `bg-inset` + 1px `line-subtle` + 圆角 6，高 32（多行最小 84），padding 8 12。focus：描边变 `--accent` + 2px 外环。 |
+| **列表行** | 12px 纵 padding，行与行之间 1px `line-subtle`；hover 时底升到 `bg-hover`。行内信息顺序固定：**标识 → 主文本 → 元信息 → 动作**。 |
+| **空态 AppEmpty** | 垂直居中，padding 32 16；标题 `--fs-sm` + secondary，提示 `--fs-sm` + muted，`max-width: 42ch`；主操作按钮放最后。 |
+
+---
+
+## 7. 页面宽度（三档，同一个左边缘）
+
+**三页共用同一个页框 `PageShell`：`--page-max: 90rem (1440)`，`padding-inline: --page-gutter`。**
+左边缘由页框决定，不由页面各自决定——这是 v2 修掉"三个产品"的办法。
+
+| 档 | 宽度 | 用在哪 |
+|---|---|---|
+| 工作区 | 撑满页框（1440 − 2×24 = 1392） | 演播厅三栏、首页列表行 |
+| 阅读列 | `--read-max: 80rem (1280)` | 正文块、transcript 内部、摘要段 |
+| 表单 | `--form-max: 48rem (768)` | 新建讨论表单（左对齐贴页框，不居中） |
+
+| 视口 | 页框宽 | gutter | 内容左边缘 |
 |---|---|---|---|
-| `idle` | 6px，`--fg-muted` | `--bg-raised` | — |
-| `preparing` | 6px，专家 `-fg`，外圈 2px `-ring`，呼吸 | 专家 `-bg` 的 60% | 右下角显示 `focus` 文本（≤80 字，2 行截断） |
-| `speaking` | 8px 实心 `-fg`，外圈 2px `-ring` | 专家 `-bg` | 左侧 2px `-fg` 竖条；允许微弱外发光 |
+| 1440 | 1440 | 24 | **24** |
+| 1280 | 1280 | 24 | **24** |
+| 390 | 390 | 16 | **16** |
+| 1920 | 1440（居中） | 24 | **264** |
 
-### 6.2 讨论状态（`discussions.status`）
+- 壳高：`100dvh` + `overflow: hidden`，页面永不滚动；滚动只发生在面板 body。
+- 演播厅三栏：`18rem / minmax(0,1fr) / 22rem`，列间距 `--sp-4`。
+- 每个滚动容器：`overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;`
+- 页头内容高统一 **56px**，底部再压一条 1px hairline（Home / Confirm / Theater 三页同源，实测总高 57）。
+- 演播厅右栏「简报」的进度条：分子取 **`expert_turn_count`**，分母 20（AC-1.13）。
+  **不许用 `turns.length`** —— 它是全部 turn（含开场 / 追问 / 总结），真实一场约 27 条，会算出 27/20。
+
+---
+
+## 8. 状态语义（roster / transcript / 顶栏三处必须一致）
+
+### 8.1 专家状态（`agent_status.state`）
+
+| 状态 | 圆点 | 卡片 | 其他 |
+|---|---|---|---|
+| `idle` | 6px `--fg-muted` | `bg-raised` | — |
+| `preparing` | 6px `-fg` + 2px `-ring`，呼吸 | `-bg` | 右下显示 `focus`（≤80 字，2 行截断） |
+| `speaking` | 8px 实心 `-fg` + 2px `-ring` | `-bg` + 左侧 2px `-fg` 竖条 | 不发光、不投影 |
+
+### 8.2 讨论状态（`discussions.status`）
 
 | 状态 | 徽标 | 文案 |
 |---|---|---|
 | `draft` | neutral | 待生成 |
-| `generating` | info + 呼吸 | 生成中 |
+| `generating` | warn + 呼吸 | 生成中 |
 | `ready` | info | 待开始 |
-| `running` | success + 呼吸点 | 进行中 |
+| `running` | success + 呼吸点 | 进行中 / LIVE |
 | `finished` | neutral | 已结束 |
 | `failed` | danger | 失败 |
 | `cancelled` | neutral + 删除线 | 已取消 |
 
-`cancelled` **不是** `failed`：文案与颜色都不同（AC-1.24）。
-
----
-
-## 7. 组件清单
-
-### 7.1 基础件（`components/common/`，已就绪）
-
-| 组件 | 变体 | 说明 |
-|---|---|---|
-| `AppButton` | `primary` / `secondary` / `ghost` / `danger`，`sm`/`md`，`loading` | 全站唯一按钮 |
-| `AppCard` | `raised`，`padded` | 卡片容器 |
-| `AppBadge` | `neutral` / `info` / `success` / `warn` / `danger` / `expert`，`dot` | 状态与标签 |
-| `AppPanel` | `title` + `actions` 插槽 + `scrollable` | 三栏的每一栏都用它 |
-| `AppEmpty` | `title` + `hint` + 默认插槽 | 空态 / 未开始 |
-| `AppInput` | `multiline`，`maxlength`，`label` | S7 新增：全站唯一文本输入（`atoms.css` 冻结期间样式留在 SFC 内，值仍全部来自 token） |
-| `AppStepper` | `min` / `max`，`label` | S7 新增：数字步进器（内置 `−` / `+` 用 `AppButton size="sm"`，不自绘按钮） |
-
-> 布局壳不在基础件之列：`components/layout/PageShell.vue` 只负责 `100dvh + overflow:hidden + 内部滚动`
-> 的页面框架（Home / GuestConfirm 使用；Theater 用 `.studio-shell` 二层壳）。它不产出任何视觉控件。
-
-### 7.2 业务组件（S7 产出，必须用上面的基础件拼）
-
-`DiscussionCard`、`NewDiscussionForm`、`GuestCard`、`RosterPanel`、`ExpertCard`、
-`ExpertStatusBadge`、`TranscriptFeed`、`TranscriptItem`、`ConsensusBoard`、`HostBar`。
-
----
-
-## 8. 布局
-
-- 壳：`height: 100dvh`（**不是 min-height**），`overflow: hidden`，页面永不滚动。
-- **页面宽度只有三档，不许各写各的**（S7 的教训：首页 1400 / 确认页 1056 / 演播厅 1440，看着像三个产品）：
-
-  | 类型 | 用在哪 | 规则 |
-  |---|---|---|
-  | 阅读列 | 首页列表、确认页卡片区 | 外壳 `max-width: var(--stage-max)` 居中，**内容列 `max-width: 80rem`（1280）居中**，行长 ≤ 80 中文字 |
-  | 工作区 | 演播厅三栏 | 占满外壳不设内容 max（三栏已经限制了行长），但左右 gutter 与阅读列一致 |
-  | 表单页 | 新建讨论 | 同阅读列，宽度取 48rem（768），不要撑满 |
-
-- 页面左右 gutter 统一 `--sp-5`；页头高度统一（当前 64px），不要一页 50 一页 64。
-- 演播厅三栏：`18rem / minmax(0,1fr) / 22rem`，间距 `--sp-4`。
-- 每个面板内部自己滚：`overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;`
-- 响应式：1200px 折叠右栏为抽屉；900px 单栏 + 顶部标签切换。
-  **容器自身的栅格变化用 `@media`，面板内部排布用 `@container`**（容器查询改不了容器自身）。
-- 超宽（≥1800px）：`--stage-max: 1600px` 居中，不拉伸正文行长。
+`cancelled` **不是** `failed`：文案、颜色、装饰三处都不同（AC-1.24）。
 
 ---
 
@@ -204,22 +235,64 @@
 
 | 场景 | 样子 |
 |---|---|
-| 列表为空 | `AppEmpty`：标题 + 一句提示 + 主操作按钮 |
-| 生成嘉宾中 | 3 张骨架卡片（`--bg-raised` + 呼吸），不转圈 |
+| 列表为空 | `AppEmpty`：标题 + 一句提示 + 主操作 |
+| 生成嘉宾中 | 3 张骨架行（`bg-raised` + 呼吸），不转圈 |
 | 讨论未开始 | transcript 区 `AppEmpty`：「等待主持人开场」 |
-| 共识/分歧暂空 | 各一行 `--fg-muted` 文案：「讨论中，暂无」 |
-| 请求失败 | 该区域替换为 `AppEmpty` + `AppButton variant="secondary"` 重试 |
-| 总结生成失败 | `AppEmpty` + 固定文案「总结生成失败，请查看完整记录」 |
+| 共识/分歧暂空 | 一行 `--fg-muted`：「讨论中，暂无」 |
+| 请求失败 | 该区域换 `AppEmpty` + `secondary` 重试按钮 |
+| 总结失败 | `AppEmpty` + 固定文案「总结生成失败，请查看完整记录」 |
 
-**禁止**：整页 loading 遮罩、toast 弹窗报错、`alert()`。错误就地展示。
+**禁止**：整页 loading 遮罩、toast、`alert()`。错误就地展示。
 
 ---
 
-## 10. 验收自查（S7/S8/S9 交付前逐条回答）
+## 10. Do's & Don'ts
 
-- [ ] `grep -rn "#[0-9a-fA-F]\{6\}" web/src/components` 输出为空
-- [ ] 三页的主操作按钮是同一个 `AppButton variant="primary"`（截图对比）
-- [ ] 同一专家在 roster / transcript / 共识区的颜色同源（`expertColorStyle` 单一映射）
-- [ ] 空 / 加载 / 失败三种状态都出现过，且视觉像一家人
-- [ ] 1440 / 1280 / 390 三档下 `document.scrollingElement.scrollHeight === innerHeight`
-- [ ] `prefers-reduced-motion: reduce` 下没有循环动画
+**Do**
+
+1. 先决定"这块内容住在哪一级表面"，再决定字号。
+2. 用 `--fs-xl → --fs-lg → --fs-md → --fs-base` 的落差建立层级。
+3. 每个列表行都按「标识 → 主文本 → 元信息 → 动作」排。
+4. 专家色只标记身份；一个专家在 roster / transcript / 共识区用同一组值。
+5. 留白优先放在区块之间（32/48），组内收紧到 8/12。
+6. 面板头一律 micro 大写——这是控制台气质的一半。
+
+**Don't**（直指 v1 的问题）
+
+1. **不要**再用"等高卡片墙"表达列表：进行中与已结束必须靠形态分开（抬升行 vs 平铺行）。
+2. **不要**在同一元素上同时用圆角 + 描边 + 阴影做层次；v2 零投影。
+3. **不要**把专家色当装饰（大面积背景、渐变、图标着色、hover 变色）。
+4. **不要**新增第二个强调色；反白主操作是全站唯一的"响"。
+5. **不要**所有文字都停在 14–16px；面板标题、eyebrow、徽标必须落到 micro / xs。
+6. **不要**留半屏死区：右栏必须有简报、图例或统计，左栏必须在底部有收口信息。
+7. **不要**引外部字体、图片、emoji 当图标；离线可用是第一原则。
+8. **不要**用 `min-height: 100vh` 当壳高，用 `100dvh` + 内部滚动。
+
+---
+
+## 11. 响应式断点
+
+| 断点 | 变化 |
+|---|---|
+| ≥1600 | 页框封顶 1440 居中，两侧留白扩大，正文行长不变 |
+| 1200–901 | 演播厅右栏折叠为右侧抽屉（遮罩 `--bg-canvas` 72%） |
+| ≤900 | 单栏 + 顶部标签切换 roster / stage / insights；gutter 降到 16 |
+| ≤600 | 卡片内边距降到 12，按钮组改为整行右对齐 |
+
+**一律 CSS 驱动**（`@media` 改容器自身栅格，`@container` 改面板内部），JS 不读视口。
+
+---
+
+## 12. 变更记录
+
+- **2026-11-17（v2.1，审查修订）**：v2.0 落地后逐项对账，改的是数值与规则、不是方向：
+  ① 简报进度分子改 `expert_turn_count`（写进 §7，防 S8 用 `turns.length` 算出 27/20）；
+  ② 专家色不再用于状态词（§2.5，简报图例的「发言/准备」改 `--fg-primary`）；
+  ③ 抽屉入口文案随面板标题统一为「简报」；
+  ④ AppButton sm 横向 padding 10→8、AppBadge padding 6→8、抽屉断点 1200–900→901–1200、
+     页头表述改为「56px 内容 + 1px hairline」（代码实测 57，原文写 56 有歧义）；
+  ⑤ 首页空态去掉多余描边盒，三页空态统一用裸 `AppEmpty`（§9）。
+- **2026-11-17（v2.0）**：覆盖旧版。参考 `design-md/linear.app`，理由：v1 的值层成立但方向层缺失——
+  无字号跨度、无表面节奏、零层级，三页宽度各自为政（1400 / 1056 / 1440），首页是"等高墙"、
+  无专家色，演播厅左右栏各留半屏死区。v2 用"控制室"方向重建：四级表面 + 仅描边做层次 + 单一反白强调 +
+  专家色只做身份 + 统一 1440 页框（左边缘三页同源）。交互与数据流未变。
