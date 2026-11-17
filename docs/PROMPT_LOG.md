@@ -249,4 +249,16 @@ B. confirm 不在本轮：不得出现 /guests/confirm 路由、不得写 agent_
 
 **教训**：**"这一轮测不出来"的缺陷，才是最容易活到下一轮的那种。** `module: 'guest'` 在当前 33 条测试里 100% 正确——因为没有第二种调用。它会在 S4 变成一张全错的审计表，而 S4 的测试照样会绿。所以每个 Session 收尾要多问一句：**这个实现里，有没有哪个常量是因为"目前只有一种情况"才成立的？**
 
+**真调验收（测试之外，手工跑一次）**：对 seed 的 draft 场打真实接口，绕开所有 fake。
+
+```
+POST /api/discussions/5/guests/generate   → HTTP 200，2359ms
+返回：1 host + 4 experts，color_id 互不重复，speaking_order 0..4，locked=false
+llm_calls 落库：module=guest / model=deepseek-flash / 2331ms
+                prompt=255 / completion=245 / total=500 / is_retry=0 / success=1
+DB 核对：5 行 guests 全部 locked=0
+```
+
+这一次证明了 fake 测不到的三件事：DeepSeek 的 JSON mode 请求体合法、`choices[0].message.content` 取法正确、`usage` 字段名对得上。同时暴露一个命名事实——**实际服务方返回的 model 是 `deepseek-flash`，不是我们在请求里写的 `deepseek-chat`**；审计表存的是响应里的真实模型名（`result.model ?? model`），所以这个偏差被如实记录下来了，没有被掩盖。写工作说明时如果要写"用了 V4 Pro"，先确认账号侧这个名字的对应关系。
+
 ---
