@@ -194,9 +194,10 @@ paths:
                     code: INVALID_STATE_TRANSITION
                     message: 当前状态不允许生成嘉宾
         '422':
-          description: |
-            模型输出两次校验均不合法（缺字段 / 人数不符 / 色板外 / 颜色重复 / 超 30s）
-            → `GUEST_OUTPUT_INVALID`（AC-1.5，spec §4.3 时间预算）。
+                description: |
+                  模型输出两次校验均不合法（缺字段 / 人数不符 / 色板外 / 颜色重复）
+                  → `GUEST_OUTPUT_INVALID`（AC-1.5）。
+                  注意：**传输超时不算 422**，那是 500 `LLM_UPSTREAM_ERROR`（spec §4.2 / §4.3）。
           content:
             application/json:
               schema:

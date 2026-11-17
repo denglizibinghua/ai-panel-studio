@@ -166,12 +166,12 @@ curl http://localhost:8787/health 返回 {status:ok, db:ok, llm:missing}；脚�
 ## S3 · 嘉宾生成与锁定 ｜ SDD（防幻觉第一关）
 
 - **输入**：`shared/schemas/guest.ts`、`contracts/openapi.yaml`
-- **允许改**：`server/src/modules/guest/**`、`server/src/llm/**`、`tests/guest/**`
+- **允许改**：`server/src/modules/guest/**`、`server/src/llm/**`、`server/test/guest/**`
 - **验收**：5 条单测全绿（合规 / 字段缺失 / 人数不符 / 颜色重复 / 重复调用 409）
 
 ```
 已读 AGENTS.md。本次执行 S3：嘉宾生成与锁定。允许改：
-server/src/modules/guest/**, server/src/llm/**, tests/guest/**
+server/src/modules/guest/**, server/src/llm/**, server/test/guest/**
 输入：shared/schemas/guest.ts、specs/001-panel/contracts/openapi.yaml
 
 实现 POST /api/discussions/:id/guests/generate：
@@ -208,13 +208,13 @@ server/src/modules/guest/**, server/src/llm/**, tests/guest/**
 > 每轮让模型吐一个 JSON 决策，同时拿到"下一个谁说话""说什么类型""要不要停"。
 
 - **输入**：`shared/schemas/ledger.ts`、`contracts/events.md`
-- **允许改**：`server/src/modules/host/ledger.ts`、`server/src/modules/host/prompt.ts`、`shared/schemas/ledger.ts`、`tests/host/ledger*`
+- **允许改**：`server/src/modules/host/ledger.ts`、`server/src/modules/host/prompt.ts`、`shared/schemas/ledger.ts`、`server/test/host/ledger*`
 - **验收**：坏 JSON / 缺 reason / 点名不存在的嘉宾，三种情况都有明确降级
 
 ```
 已读 AGENTS.md。本次执行 S4：主持人账本。允许改：
 server/src/modules/host/ledger.ts, server/src/modules/host/prompt.ts,
-shared/schemas/ledger.ts, tests/host/ledger.test.ts
+shared/schemas/ledger.ts, server/test/host/ledger.test.ts
 输入：specs/001-panel/contracts/events.md、shared/schemas/*.ts
 
 实现「progress ledger」：每一轮把「议题 + 已锁定嘉宾名单 + 最近 6 条发言」喂给模型，
@@ -258,12 +258,12 @@ ledger.ts 要求：
 ## S5 · 调度决策纯函数 ｜ TDD
 
 - **输入**：`ledger.ts` 的类型
-- **允许改**：`server/src/modules/host/decide.ts`、`tests/host/decide.test.ts`
+- **允许改**：`server/src/modules/host/decide.ts`、`server/test/host/decide.test.ts`
 - **验收**：先贴 8 条红，再贴全绿；`decide.ts` 里 grep 不到 `Date.now` / `fetch` / `db`
 
 ```
 已读 AGENTS.md。本次执行 S5：调度决策纯函数。允许改：
-server/src/modules/host/decide.ts, tests/host/decide.test.ts
+server/src/modules/host/decide.ts, server/test/host/decide.test.ts
 
 第一步：只写测试，不写实现，8 条全红，把红色输出贴给我：
 1. 正常账本 → 返回 {action:'speak', guest_id, speech_type, instruction}
@@ -288,12 +288,12 @@ server/src/modules/host/decide.ts, tests/host/decide.test.ts
 ## S6 · SSE 事件总线 ｜ TDD
 
 - **输入**：`contracts/events.md`
-- **允许改**：`server/src/modules/sse/**`、`tests/sse/**`
+- **允许改**：`server/src/modules/sse/**`、`server/test/sse/**`
 - **验收**：两个讨论并发订阅不串；`Last-Event-ID` 只补 `seq >` 的部分；断开后定时器清掉
 
 ```
 已读 AGENTS.md。本次执行 S6：SSE 事件总线。允许改：
-server/src/modules/sse/**, server/src/modules/guest/confirm.ts, tests/sse/**
+server/src/modules/sse/**, server/src/modules/guest/confirm.ts, server/test/sse/**
 输入：specs/001-panel/contracts/events.md
 
 实现：
@@ -336,13 +336,13 @@ server/src/modules/sse/**, server/src/modules/guest/confirm.ts, tests/sse/**
 > 没有任何 Session 认领 `modules/discussion/`（5 个 REST 端点）和"开场→循环→收尾"的主循环。
 
 - **输入**：`contracts/openapi.yaml`（discussions / start / cancel）、`events.md`、S4/S5 的 `decide.ts`、S6 的 `publish()`
-- **允许改**：`server/src/modules/discussion/**`、`server/src/modules/turn/runner.ts`、`server/src/modules/summary/extract.ts`、`tests/discussion/**`、`tests/runner/**`
+- **允许改**：`server/src/modules/discussion/**`、`server/src/modules/turn/runner.ts`、`server/src/modules/summary/extract.ts`、`server/test/discussion/**`、`server/test/runner/**`
 - **验收**：`pnpm -C server test -- runner` 全绿 + 手动 HTTP 跑完一整场
 
 ```
 已读 AGENTS.md。本次执行 S6.5：讨论生命周期 + 主循环 + 增量提炼器。允许改：
 server/src/modules/discussion/**, server/src/modules/turn/runner.ts,
-server/src/modules/summary/extract.ts, tests/discussion/**, tests/runner/**
+server/src/modules/summary/extract.ts, server/test/discussion/**, server/test/runner/**
 
 A. 讨论 CRUD（modules/discussion/）
    1. POST /api/discussions        —— 建 draft，写 state.draft 事件（seq=1），返回 id
@@ -575,7 +575,7 @@ ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
 已读 AGENTS.md。本次执行 S9：收尾、共识定稿、失败兜底。允许改：
 server/src/modules/summary/summary.ts, server/src/modules/summary/merge.ts,
 server/src/modules/discussion/retry.ts, web/src/components/theater/SummaryPanel.vue,
-tests/summary/**
+server/test/summary/**
 注意：**增量提炼（每 2 条专家发言一次）已经在 S6.5 做完了**，本轮只做结束时的定稿。
 
 实现：

@@ -24,7 +24,7 @@
 - [x] S0 · 契约冻结 — 阶段：SDD
 - [x] S1 · 接口与事件协议 — 阶段：SDD
 - [x] S2 · 工程骨架与 seed — 阶段：SDD
-- [ ] S3 · 嘉宾生成与锁定 — 阶段：SDD
+- [x] S3 · 嘉宾生成与锁定 — 阶段：SDD
 - [ ] S4 · 主持人账本 — 阶段：TDD
 - [ ] S5 · 调度决策纯函数 — 阶段：TDD
 - [ ] S6 · SSE 事件总线 — 阶段：TDD
@@ -203,5 +203,50 @@ server/**, shared/**, web/**（仅脚手架）, scripts/**
 改完 `pnpm check` 仍全绿（20 tests），`db:seed` 输出 5 discussions / 25 guests / 31 turns / 6+6 points / 127 events / 20 agent_status，与 §6 的表逐项对得上。
 
 **教训**：**单轮测试全绿 ≠ 计划可执行。** 这一轮的缺陷没有一条能被 `pnpm test` 抓到，全部藏在"Session A 的产出喂不进 Session B"的接缝里。所以每完成一个 Session，除了跑本轮的验收命令，还要做一次"下一轮能不能开工"的反向检查：它需要的输入文件存在吗？它被允许改的目录里有没有它要创建的模块？没有这一步，绿测试会一直骗人到 S8 才崩。
+
+---
+
+### S3 · 嘉宾生成与锁定（只做 generate，不碰 lock）
+
+**阶段**：SDD
+
+**核心 Prompt**：SESSION_MAP 的 S3 段 + 两条追加硬约束（fake 注入、不碰 confirm）。
+
+```
+已读 AGENTS.md。本次执行 S3：嘉宾生成与锁定。允许改：
+server/src/modules/guest/**, server/src/llm/**, server/test/guest/**
+输入：shared/schemas/guest.ts、specs/001-panel/contracts/openapi.yaml
+
+实现 POST /api/discussions/:id/guests/generate：
+1. 模型调用必须走 server/src/llm/ 下的唯一出口，Key 只从 process.env.DEEPSEEK_API_KEY 读，
+   缺失时抛明确错误，不许 fallback 到假数据。
+2. JSON 模式输出 1 位主持人 + N 位专家，字段严格按 Guest schema。
+3. zod 二次校验；不合法带错误信息重试 1 次；仍不合法返回 422，原始输出只进服务端日志。
+4. 校验通过后写入 guests 表，locked=0（同一事务先 DELETE 该讨论 locked=0 的旧行）。
+   已有 locked=1 的嘉宾 → 409，不许覆盖。
+5. color_id 必须在 10 色板内且互不重复。
+
+追加约束：
+A. 单测一律注入 fake client，任何用例不得打真实网络；测试开头 delete process.env.DEEPSEEK_API_KEY，
+   让漏到默认 transport 的路径立刻在 LLM_NOT_CONFIGURED 炸掉，而不是偷偷打真接口。
+B. confirm 不在本轮：不得出现 /guests/confirm 路由、不得写 agent_status、不得改 discussions.status。
+```
+
+**意图**：嘉宾是整场讨论的"事实基座"——后面所有发言都只能引用这里落库的行。所以真正要防的不是"模型生成得难看"，而是**脏数据进库**：人数不符、颜色撞车、重复点击越点越多。要求的顺序是"校验全过才落库 + 单事务替换旧行"，把库当成唯一可信来源，而不是让内存里的半成品有机会流出去。
+
+**卡点**：四条，前三条都不在测试覆盖范围内。
+
+1. **`llm_calls.module` 被硬编码成 `'guest'`**：INSERT 写死了字面量，请求对象上的 `module` 字段实际是死的。S3 自己看不出来——这轮只有 guest 一种调用，33 条测试全绿。但 S4 的 ledger、S6.5 的 turn/summary 一接进来，审计表会把所有调用记成 guest，"按模块核算额度""这场讨论调了几次模型"会整体失真。根因是我写 prompt 时只说了"每次尝试写一行 llm_calls"，没说 module 要透传。
+2. **`llm_calls.success` 语义写反**：初版是"上游返回就算成功"，于是 422 那些校验失败的尝试被记成成功。data-model §2.9 写的是"校验通过才算 1"。它自己发现，改成注入 `validate` 谓词——这条给分。
+3. **超时被归到 422**：spec §4.3 写"嘉宾生成 30s → 422 `GUEST_OUTPUT_INVALID`"，openapi 的 422 描述也列了"超 30s"；但 spec §4.2 里 `LLM_UPSTREAM_ERROR` 的定义恰恰是"模型服务不可用 / 超时"。**契约自己跟自己打架**，实现按 500 做并主动上报。
+4. **测试目录与文档不一致**：SESSION_MAP 全篇写 `tests/**`，仓库既有约定是 `server/test/**`（S2 的三个文件都在那）。它按现实走并记了一笔。
+
+**修正**：
+
+- `shared/schemas/enums.ts` 补 `export type LlmModule`；`client.ts` 的 `module` 改成 `LlmModule`，由 `req.module` 真正透传进 INSERT。**必须在 S4 之前修**，否则 S4 的全部测试会建立在错误的审计口径上。
+- 契约收口：spec §4.3 改为"500 `LLM_UPSTREAM_ERROR`（传输超时）；校验不合法才是 422"，openapi 的 422 描述删掉"超 30s"并补一句反向说明。判据：**422 表示"你给我的东西我消化不了"，超时表示"我没拿到东西"**。
+- 文档统一：AGENTS §5 目录地图 + SESSION_MAP 全部 13 处 `tests/` → `server/test/`；AGENTS §0 里那行临时备注撤回（阶段指针只放阶段）。
+
+**教训**：**"这一轮测不出来"的缺陷，才是最容易活到下一轮的那种。** `module: 'guest'` 在当前 33 条测试里 100% 正确——因为没有第二种调用。它会在 S4 变成一张全错的审计表，而 S4 的测试照样会绿。所以每个 Session 收尾要多问一句：**这个实现里，有没有哪个常量是因为"目前只有一种情况"才成立的？**
 
 ---

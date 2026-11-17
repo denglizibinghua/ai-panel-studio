@@ -144,7 +144,7 @@ draft|generating|ready|running ──取消(cancel)→ cancelled
 
 | 环节 | 上限 | 超时行为 |
 |---|---|---|
-| 嘉宾生成 | 30s | → 422 `GUEST_OUTPUT_INVALID` |
+| 嘉宾生成 | 30s | → 500 `LLM_UPSTREAM_ERROR`（传输超时）；**校验不合法才是 422** `GUEST_OUTPUT_INVALID` |
 | 单条发言 | 20s | 该 guest 记一次失败，状态回 `idle` |
 | 共识 / 分歧提炼 | 15s | 跳过本窗口，不阻塞调度 |
 | 收尾总结 | 30s | 返回「总结生成失败，请查看完整记录」，仍置 `finished` |

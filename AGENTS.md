@@ -1,4 +1,4 @@
-# AGENTS.md — AI Panel Studio
+﻿# AGENTS.md — AI Panel Studio
 
 > 本文件是本仓库对 AI 编码助手的唯一契约。任何会话开始前必读。
 > 纪律：本文件 ≤150 行。细节搬进 `docs/`，这里只留指针。
@@ -7,10 +7,10 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S3`（S0/S1 已冻结；S2 已完成：9 张表 + 迁移 + seed + zod + 20 个测试全绿）
-- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层
-- 下一步：S3 嘉宾生成与锁定（`server/src/modules/guest/**`）
-- 已知未决：LLM 凭据未配置（`/health` 会返回 `llm: "missing"`，不影响 S3 的 fake 测试；真调模型前需配）
+- 当前 Session：`S3` 已完成（S0/S1 已冻结；S2 数据层；S3 生成接口 + 33 个测试全绿）
+- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）
+- 下一步：S4 主持人账本（`server/src/modules/host/ledger.ts` + `prompt.ts`）
+- 已知未决：真调模型未验收（S3 单测全部注入 fake，需人工 curl 打一次真接口）；`confirm` 留 S6
 
 ---
 
@@ -98,7 +98,7 @@ web/src/
   stores/       discussion.ts（五份独立 state，不得合并）
   api/          client.ts + events.ts（fetch + ReadableStream，不用 EventSource）
   mock/         S7 的假数据
-tests/          单元与集成（guest / host / sse / discussion / runner / summary）
+server/test/    单元与集成（guest / host / sse / discussion / runner / summary）
 e2e/            Playwright
 specs/001-panel/
 ```
