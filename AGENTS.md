@@ -7,10 +7,13 @@
 
 ## 0. 当前阶段（每次 Session 结束由人更新，只改这一段）
 
-- 当前 Session：`S3` 已完成（S0/S1 已冻结；S2 数据层；S3 生成接口 + 33 个测试全绿）
-- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）
-- 下一步：S4 主持人账本（`server/src/modules/host/ledger.ts` + `prompt.ts`）
-- 已知未决：真调模型未验收（S3 单测全部注入 fake，需人工 curl 打一次真接口）；`confirm` 留 S6
+- 当前 Session：`S4` 已完成（ledger prompt + 解析 + 两级降级 + 停摆计数，9 条测试全绿；全仓 42 条）
+- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本（`llm_calls.module='ledger'` 已断言）
+- 下一步：S5 调度决策纯函数（`server/src/modules/host/decide.ts` + `server/test/host/decide.test.ts`）
+- 已知未决：S3 已真调验收（200/2359ms/500 tokens），**S4 的 ledger 尚未真调**（需手动打一次）；
+  `confirm` 留 S6；`requestLedger` 的传输错误直接上抛，`run.failed` 归 S6.5 runner；
+  `LedgerContext.roster` 只传可发言专家（host 由调用方过滤）；
+  **F3 的"主持人追问"此前无归属** → 已补 AC-1.25，实现在 S6.5 的 `host/interject.ts`
 
 ---
 

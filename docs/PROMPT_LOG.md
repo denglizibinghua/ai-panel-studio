@@ -25,7 +25,7 @@
 - [x] S1 · 接口与事件协议 — 阶段：SDD
 - [x] S2 · 工程骨架与 seed — 阶段：SDD
 - [x] S3 · 嘉宾生成与锁定 — 阶段：SDD
-- [ ] S4 · 主持人账本 — 阶段：TDD
+- [x] S4 · 主持人账本 — 阶段：TDD
 - [ ] S5 · 调度决策纯函数 — 阶段：TDD
 - [ ] S6 · SSE 事件总线 — 阶段：TDD
 - [ ] S7 · 演播厅布局 — 阶段：DDD
@@ -262,5 +262,136 @@ DB 核对：5 行 guests 全部 locked=0
 这一次证明了 fake 测不到的三件事：DeepSeek 的 JSON mode 请求体合法、`choices[0].message.content` 取法正确、`usage` 字段名对得上。同时暴露一个命名事实——**实际服务方返回的 model 是 `deepseek-flash`，不是我们在请求里写的 `deepseek-chat`**；审计表存的是响应里的真实模型名（`result.model ?? model`），所以这个偏差被如实记录，没有被掩盖。
 
 已核实：`deepseek-chat` 这个型号已经下线，**Pro 档目前由 `deepseek-flash` 承接**。因此默认模型名改成 `deepseek-flash` 并支持 `DEEPSEEK_MODEL` 覆盖 —— 写工作说明时按"实际使用 DeepSeek（当前服务模型 `deepseek-flash`，对应作业文中的 V4 Pro 档）"来写，不要写一个自己证不了的名字。
+
+---
+
+### S4 · 主持人账本
+
+**阶段**：TDD 前置
+
+**核心 Prompt**：SESSION_MAP 的 S4 段原文（逐字照抄，三条硬边界不删）。
+
+```
+已读 AGENTS.md 与 server/src/modules/guest/lineup.ts。本次执行 S4：主持人账本。
+只允许新建/修改这四个文件：
+  server/src/modules/host/prompt.ts
+  server/src/modules/host/ledger.ts
+  shared/schemas/ledger.ts
+  server/test/host/ledger.test.ts
+不要碰：llm/client.ts、app.ts、guest/**、任何迁移与 seed。
+
+【硬边界，违反即作废】
+1. llm.complete 必须传 module: 'ledger'（类型是 shared 的 LlmModule）。
+2. 不得新建 LLM client、不得 import 模型 SDK、不得写 fetch(、不得读 process.env。
+3. stall_count 只能作为入参进、出参出；不得有模块级状态。
+
+【接口，按这个签名写】
+export interface LedgerContext {
+  discussion_id: number;
+  topic: string;
+  roster: { id: number; name: string; profession: string; stance: string }[];  // 只放 locked=1
+  recent_turns: { guest_id: number; speaker_name: string; speech_type: string; content: string }[];
+  expert_turn_count: number;
+  prev_stall_count: number;
+}
+
+export interface LedgerOutcome {
+  parse_status: 'structured' | 'json_mode' | 'fallback';
+  is_request_satisfied: boolean;
+  is_in_loop: boolean;
+  is_progress_being_made: boolean;
+  next_guest_id: number | null;
+  next_speaker_name: string | null;
+  speech_type: SpeechType | null;
+  instruction: string | null;
+  stall_count: number;
+  raw: string;
+  issues: string[];
+}
+
+export async function requestLedger(llm: ChatJsonClient, ctx: LedgerContext): Promise<LedgerOutcome>
+
+【prompt.ts】
+- buildLedgerMessages(ctx)：拼 system + user。
+- buildLedgerRetryMessages(messages, issues)：在原消息后追加"上次哪里不合法"的反馈。
+- 名单每轮重新拼进 system，写明"你只能从这份名单里选人，名单外的人不存在"。
+- 写明"每次发言 1–2 句""如果已有 3 位以上嘉宾表达过同一立场，不要再让人重复该立场"。
+- 要求纯 JSON、每项都有 reason 和 answer，字段名照 shared/schemas/ledger.ts。
+
+【ledger.ts】
+- parseLedger(raw)：剥掉 ```json 围栏后 JSON.parse，失败返回 null（不抛）。
+- validateLedger(obj, roster)：zod 校验 + next_speaker 必须 ∈ roster 的 name。
+- requestLedger 严格两层：第 1 次通过 → 'structured'；不通过带 issue 重试 1 次
+  （isRetry: true）→ 通过 → 'json_mode'；仍不通过 → fallback（最久未发言者，
+  speech_type='supplement'）。fallback 不是第三次重试。
+- computeStallDelta(is_in_loop, is_progress, prev)：循环或没进展 +1（封顶 3），有进展 -1（保底 0）。
+- 本轮不写库、不发事件；持久化归 S6.5 runner。
+
+【测试（8 条必须全含）】
+1. 正常 JSON → 'structured'，next_guest_id 正确
+2. ```json 围栏 → 仍能解析
+3. 缺 reason → 重试后通过 → 'json_mode'
+4. next_speaker 不在 roster → 重试仍非法 → fallback，next_guest_id = 最久未发言者
+5. 两次都非法 → fallback，speech_type='supplement'
+6. stall：连续 2 次无进展 → 2；第 3 次 → 3；再来仍 3；有进展 -1 且不低于 0
+7. 同一输入调用两次 → LedgerOutcome 完全一致（证明无状态）
+8. 审计归属：requestLedger 后 llm_calls 对应行 module === 'ledger'
+```
+
+**意图**：这是全项目的心脏。不是"让模型随便挑个人说话"，而是每轮把"谁发言 / 什么类型 / 该不该收尾"压缩成一个**可校验、可复盘、可降级**的 JSON 决策。三条硬边界分别锁三件事：审计口径（module 由调用方传）、依赖收口（只有 `llm/` 一个出口）、可重放（同一个输入必须得到同一个账本）。只要第 7、8 条在，S4 就跑不偏。
+
+**实现决定**（超出 Prompt 字面、需要留档）：
+
+1. **决策 JSON 与 `ledger` 表行分开**：`shared/schemas/ledger.ts` 里原有的 `ledgerSchema`（DB 行）一字未动，只新增 `llmLedgerDecisionSchema`（6 项，每项 `{reason, answer}`）。落库投影归 S6.5，S4 只产 `LedgerOutcome`。
+2. **`roster` 传"可发言名单"（专家），host 由调用方过滤**：接口按 Prompt 原文不含 `role`，所以 host 不能混进来，否则"最久未发言者"永远命中主持人。此约定写进了 `LedgerContext.roster` 的注释，S6.5 必须遵守。
+3. **fallback 的停摆仍 +1**：解析失败当作"没有进展"（`is_in_loop=false`、`is_progress_being_made=false`），走同一个 `computeStallDelta`，不给 fallback 开小灶。
+4. **传输层错误直接上抛，不吞成 fallback**：LLM 挂掉是 `LLM_UPSTREAM_ERROR`，由 S6.5 runner 决定 `run.failed`；把它伪装成"输出不合法"会污染 `parse_status` 的语义。
+5. **`reason` 上限 300、`instruction` 上限 200**：后者照 data-model §2.5 的列约束；前者只为挡住无限长理由把 `raw_json` 撑爆（≤4096）。
+
+**卡点**：无返工。唯一需要盯的是 `pnpm -C server test -- ledger` 的过滤名——vitest 按文件名匹配，`ledger` 恰好只命中本轮文件；若后续出现 `ledger-*.test.ts` 会连带跑，验收时要看文件数。
+
+**教训**：**纯函数的边界不在函数体，在参数表。** 这轮"不许藏状态"如果只靠"函数里没写 `let`"来证，是证不出来的——`pickMostStaleMember` 里也有 `let`。真正的证明是第 7 条：同一 `ctx` 两次调用、`toEqual`。写测试时先问"哪个断言能让错误实现也变红"，再决定要不要写它。
+
+**验收**：
+
+```
+$ pnpm -C server test -- ledger
+✓ test/host/ledger.test.ts (9 tests) 34ms
+Test Files  1 passed (1)
+     Tests  9 passed (9)
+
+$ pnpm check
+shared tsc --noEmit ✓  server tsc --noEmit ✓  vitest run → 6 files / 42 tests passed
+
+$ grep -E "fetch\(|process\.env|openai" server/src/modules/host/*.ts
+（无输出）
+```
+
+第 8 条测试实测：注入 transport + 临时 db，跑一次 `requestLedger` 后 `llm_calls` 落一行
+`discussion_id=<本场> / module='ledger' / is_retry=0 / success=1`。
+
+**审查补记（独立复核，判定期）**：
+
+三条硬边界全部守住，复核通过：`grep -E "fetch\(|process\.env|openai" server/src/modules/host` 无输出；
+`module: 'ledger'` 由 `requestAttempt` 显式传入；`computeStallDelta` 纯函数、`pickMostStaleMember` 的 `let` 都是局部变量且第 7 条用 `toEqual` 锁死了。
+
+但发现一个**测试永远抓不到的缺口 —— 不是代码错，是契约漏了需求**：
+
+> F3 原文："主持人负责开场、追问、串联和总结"。
+> 实际：`grep 追问 specs/001-panel/spec.md` **零命中** —— 全篇 44 条 AC 没有一条管"追问"；
+> S4 的 `roster` 明确把 host 过滤掉（不传 role，host 进不来）；S6.5 原稿里也没有任何"主持人中场发言"的任务。
+
+三段一起看，结论很直接：**跑起来会是"主持人开场一句 → 专家互喷 20 轮 → 主持人总结一句"**。中间二十分钟主持人消失。那是辩论赛，不是圆桌；F3 的"追问 / 串联"和考察点第 6 条"沉浸感、像在看一场演播厅讨论"直接丢分。
+
+这类缺口最阴的地方在于：**没有任何一条测试会红。** S4 的 9 条全绿、42 条全绿，因为契约里根本没写这件事。
+
+**修正**：
+
+- `spec.md` v1.1 补 **AC-1.25**：每累计 4 条专家发言，主持人产出一条 `speech_type='question'` 的 turn；
+  必须引用最近发言里的具体观点并推向最分歧处；≤120 字；计入 `turns`/`turn_no`，**不计入 `expert_turn_count`**，不触发提炼窗口。
+- `SESSION_MAP` S6.5 增加 **D 段**：`host/interject.ts`（prompt + 生成），由 runner 每 4 条专家发言调用一次，**不经过 ledger**（ledger 只调度专家）。
+- 对应测试：12 条专家发言 → 恰好 3 条 `question` 且发言人必须是 host，且 `expert_turn_count` 不因它增加。
+
+**教训**：**"测试全绿"只证明实现符合契约，不证明契约覆盖了需求。** 这已经是第二次撞上同一类问题 —— S2 是"模块没有 Session 认领"，S4 是"需求没有 AC 兜着"，症状不同、根因一样：**没人做"需求 → 验收标准"的完整性核对**。所以每个 Session 收尾要加一步机械检查：拿 F1–F7 / T1–T4 逐条问"这条现在由哪条 AC 兜着？"—— 没有 AC 的，就是没人做，无论测试多绿。
 
 ---

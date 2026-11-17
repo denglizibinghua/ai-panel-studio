@@ -32,7 +32,7 @@
 | 发起者 / 观察者 | 客户端自带的匿名 `sessionId` 区分；v1 **后端不做权限校验**，两者后端能力相同；但前端按 `session_id` 比对隐藏写操作入口（AC-3.8） |
 | 停摆计数 | 账本判定「在原地打转」的连续次数，达到 3 触发强制收尾 |
 
-**牌面数字约定**：专家人数 `expert_count ∈ [1, 8]`，默认 4（故一场最多 1 主持 + 8 专家 = 9 行 `guests`，**色板必须 ≥ 9 色**）；单条专家发言 ≤ 120 字（约 1–2 句）；主持人开场 / 总结 ≤ 400 字；总结正文 150–250 字；SSE 心跳 15s；专家发言上限 20 条；同时 `running` 的讨论 ≤ 3 场。
+**牌面数字约定**：专家人数 `expert_count ∈ [1, 8]`，默认 4（故一场最多 1 主持 + 8 专家 = 9 行 `guests`，**色板必须 ≥ 9 色**）；单条专家发言 ≤ 120 字（约 1–2 句）；主持人开场 / 总结 ≤ 400 字；总结正文 150–250 字；SSE 心跳 15s；专家发言上限 20 条；**每 4 条专家发言插入 1 次主持人追问（≤120 字）**；同时 `running` 的讨论 ≤ 3 场。
 
 ---
 
@@ -72,6 +72,8 @@
 - AC-1.22 **（对应 F6 · 色块一致）** WHEN transcript 渲染单条发言 THEN THE SYSTEM SHALL 使该条的色块取自 `guests.color_id`，且同一嘉宾全场颜色不变、不同嘉宾颜色互不相同。
 - AC-1.23 **（对应 F6 · 内部事件不外泄）** THE SYSTEM SHALL NOT 在 transcript 区渲染任何 `agent.*` / `run.*` / `state.*` 事件；transcript 区只渲染 `turn.done` 对应的 `turns` 行，`turn.delta` 期间的临时内容不得进位为永久条目。
 - AC-1.24 WHEN 讨论处于 `ready` 且用户取消 THEN THE SYSTEM SHALL 把 `status` 置 `cancelled`、`finished_at` 写入当前时间、推送 `run.cancelled`，并**不再产生任何 `turn`**；`cancelled` 与 `failed` 不得混用（`cancelled` 的 `error_code` 恒为 NULL）。
+- AC-1.25 **（对应 F3 · 主持人追问 / 串联）** WHILE 讨论处于 `running` THEN THE SYSTEM SHALL 每累计 **4 条专家发言**由**主持人**（`guests.role='host'`）产出 1 条 `speech_type='question'` 的 turn：内容必须引用最近发言里的**具体观点**并指向其中最分歧或最未展开的一点，长度 ≤120 字；该 turn 计入 `turns` 与 `turn_no`，但**不计入 `expert_turn_count`**，也不单独触发提炼窗口。
+  （没有这一条，主持人只会在开场和结尾出现，中间全是专家互喷 —— 那是辩论赛，不是圆桌。）
 
 ### US-2（P2）多讨论并行互不干扰
 
@@ -208,3 +210,4 @@ draft|generating|ready|running ──取消(cancel)→ cancelled
 |---|---|---|
 | 2026-11-17 | v0.1 | S0 初稿：US-1/2/3 + 36 条 EARS 验收 + 硬约束映射 + 7 条待裁决 |
 | 2026-11-17 | v1.0 | 裁决 7 条 + 关闭 8 条；修 5 个契约缺陷（turns 长度 CHECK / 色板容量 / locked 归属 / agent_status 无事件 / 缺反轮流验收）；新增 AC-1.7b、AC-1.21–1.24、AC-2.10、AC-3.8；状态机新增 `cancelled` |
+| 2026-11-17 | v1.1 | 补 AC-1.25：主持人每 4 条专家发言插入 1 次追问（F3 的"追问 / 串联"此前无任何验收标准，也无实现归属） |

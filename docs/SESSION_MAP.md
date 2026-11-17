@@ -24,7 +24,7 @@
 | S4 | 主持人账本 | TDD 前置 | events.md §7 + S3 校验风格 | ledger prompt + 解析 + 重试 + 停摆计数（`module='ledger'`） | `test -- ledger` + 审计归属断言 | 3h |
 | S5 | 调度决策纯函数 | TDD | ledger schema | 先红后绿的 `decide.ts` | `pnpm -C server test -- decide` | 2h |
 | S6 | SSE 事件总线 + confirm | TDD | contracts/events.md | 每讨论一条流 + 序号补发 + 清理 + `publishEphemeral` | 并发 curl + 补发测试 | 3h |
-| S6.5 | 讨论生命周期 + 主循环 | TDD | contracts + `decide` + `publish` | 5 个 REST 端点 + `runner.ts` + 增量提炼器 | `pnpm -C server test -- runner` | 4h |
+| S6.5 | 讨论生命周期 + 主循环 | TDD | contracts + `decide` + `publish` | 5 个 REST 端点 + `runner.ts` + 增量提炼 + **主持人追问** | `pnpm -C server test -- runner` | 5h |
 | S7 | 三页 + 演播厅布局 | DDD | DESIGN.md + 本节线框 | HomeView / GuestConfirmView / TheaterView | 9 张截图 + 一致性 6 问 | 4h |
 | S8 | 状态层接线 | DDD | S7 + events.md | fetch 流 → store → 五面板 | 真跑一场 | 3h |
 | S9 | 收尾与兜底 | TDD | 全部 | 自然语言总结 + 共识定稿 + 失败兜底 | 边界用例 | 2h |
@@ -384,13 +384,14 @@ server/src/modules/sse/**, server/src/modules/guest/confirm.ts, server/test/sse/
 > 没有任何 Session 认领 `modules/discussion/`（5 个 REST 端点）和"开场→循环→收尾"的主循环。
 
 - **输入**：`contracts/openapi.yaml`（discussions / start / cancel）、`events.md`、S4/S5 的 `decide.ts`、S6 的 `publish()`
-- **允许改**：`server/src/modules/discussion/**`、`server/src/modules/turn/runner.ts`、`server/src/modules/summary/extract.ts`、`server/test/discussion/**`、`server/test/runner/**`
+- **允许改**：`server/src/modules/discussion/**`、`server/src/modules/turn/runner.ts`、`server/src/modules/summary/extract.ts`、`server/src/modules/host/interject.ts`、`server/test/discussion/**`、`server/test/runner/**`
 - **验收**：`pnpm -C server test -- runner` 全绿 + 手动 HTTP 跑完一整场
 
 ```
-已读 AGENTS.md。本次执行 S6.5：讨论生命周期 + 主循环 + 增量提炼器。允许改：
+已读 AGENTS.md。本次执行 S6.5：讨论生命周期 + 主循环 + 增量提炼器 + 主持人追问。允许改：
 server/src/modules/discussion/**, server/src/modules/turn/runner.ts,
-server/src/modules/summary/extract.ts, server/test/discussion/**, server/test/runner/**
+server/src/modules/summary/extract.ts, server/src/modules/host/interject.ts,
+server/test/discussion/**, server/test/runner/**
 
 A. 讨论 CRUD（modules/discussion/）
    1. POST /api/discussions        —— 建 draft，写 state.draft 事件（seq=1），返回 id
@@ -413,7 +414,8 @@ B. 主循环（modules/turn/runner.ts）
         b. action='speak' → agent_status 置 preparing → 调模型拿 1–2 句 → speaking → 落 turns
            → turn.done → idle
         c. 每完成 2 条专家发言 → 调 summary/extract.ts 提炼，写 provisional 条目 + 事件
-        d. action='summarize' / 'force_stop' → 跳出
+        d. **每完成 4 条专家发言 → 调 host/interject.ts 让主持人插一条追问**（见 D）
+        e. action='summarize' / 'force_stop' → 跳出
    3. 收尾：生成 summary（150–250 字）→ 写 turns(speech_type='summary') **并在同一事务里**
       回填 discussions.summary_text（INV-9：两者逐字相同）→ state.finished + run.finished
    4. 任何一步致命失败 → status='failed' + run.failed，不留半写状态
@@ -425,15 +427,26 @@ C. 增量提炼器（modules/summary/extract.ts）
    与已有文本重复的不新增（靠 uq_consensus_text 兜底）；写入 status='provisional'。
    模型调用必须走 server/src/llm/，且记录 llm_calls(module='summary')。
 
+D. 主持人追问（modules/host/interject.ts）—— AC-1.25，F3 的"追问/串联"
+   buildInterjectMessages(ctx) + generateInterjection(llm, ctx) → string（≤120 字）
+   触发：每累计 4 条专家发言一次（4/8/12/16/20），由 runner 调用，**不经过 ledger**。
+   内容要求（写进 prompt）：必须引用最近发言里的具体观点（点名某位嘉宾说过的话），
+   并把它推向最分歧或最没展开的地方；不要复述、不要总结、不要评价"大家说得都很好"。
+   写入：走同一「一笔发言写入单元」，guest_id = 主持人的 id，speech_type='question'。
+   **不计入 expert_turn_count，不触发提炼窗口。**
+   模型调用记录 llm_calls(module='turn')（它属于发言生成，不属于调度）。
+
 测试（先红后绿）：
   - start 一个 draft 讨论 → 409 INVALID_STATE_TRANSITION
   - 已有 3 场 running 时再 start → 409 TOO_MANY_RUNNING
   - runner 用 fake LLM 跑完一场 → turns ≥ 6、至少 1 条 summary、status=finished、
     summary_text 与 summary turn 的 content 逐字相等
   - 每 2 条专家发言后 consensus_points 行数增加
+  - **12 条专家发言后恰好出现 3 条 speech_type='question' 的 turn，且 guest 是 host**
+    （4/8/12 各一次）；这些 turn 没有让 expert_turn_count 增加
   - cancel 后 runner 停止，turns 行数不再增加，status=cancelled 且 error_code IS NULL
 验收：pnpm -C server test -- runner 全绿；并给我一段"curl 建讨论 → start → 等 30s → 查详情"
-的真实输出（status 应为 finished，turns 应有若干条）。
+的真实输出（status 应为 finished，turns 应有若干条，且能看到主持人追问穿插其中）。
 ```
 
 ---
