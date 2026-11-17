@@ -54,6 +54,9 @@ importers:
 
   web:
     dependencies:
+      '@ai-panel/shared':
+        specifier: workspace:*
+        version: link:../shared
       vue:
         specifier: ^3.5.13
         version: 3.5.45(typescript@5.9.2)

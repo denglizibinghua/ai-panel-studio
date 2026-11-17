@@ -1,0 +1,153 @@
+/**
+ * 视觉 token —— 全站唯一的样式真相源（见 docs/DESIGN.md）。
+ *
+ * 规则：组件里只能 `var(--…)`，不得出现 #hex / rgb() / hsl()。
+ * 间距只用 --sp-1..7（4/8/12/16/24/32/48），不要发明 20px / 5px。
+ */
+
+:root {
+  /* ── 基底 ───────────────────────────────────────────── */
+  --bg-base: #0b0f14;
+  --bg-panel: #121821;
+  --bg-raised: #1a2230;
+  --bg-inset: #0e141b;
+  --line-subtle: rgba(255, 255, 255, 0.06);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
+  /* ── 文字 ───────────────────────────────────────────── */
+  --fg-primary: #e8edf4;
+  --fg-secondary: #9aa7b8;
+  --fg-muted: #5d6b7d;
+
+  /* ── 语义色 ─────────────────────────────────────────── */
+  --accent: #6ea8fe;
+  --accent-strong: #3f7fe0;
+  --accent-bg: rgba(110, 168, 254, 0.14);
+  --danger: #f26d6d;
+  --danger-bg: rgba(242, 109, 109, 0.14);
+  --danger-ring: rgba(242, 109, 109, 0.35);
+  --success: #4ec98a;
+  --warn: #f5b642;
+
+  /* ── 专家色 × 3 用途（10 个 color_id）───────────────── */
+  --c-amber-fg: #f5b642;
+  --c-amber-bg: rgba(245, 182, 66, 0.12);
+  --c-amber-ring: rgba(245, 182, 66, 0.38);
+
+  --c-rose-fg: #f2708f;
+  --c-rose-bg: rgba(242, 112, 143, 0.12);
+  --c-rose-ring: rgba(242, 112, 143, 0.38);
+
+  --c-sky-fg: #5aa9f0;
+  --c-sky-bg: rgba(90, 169, 240, 0.12);
+  --c-sky-ring: rgba(90, 169, 240, 0.38);
+
+  --c-emerald-fg: #3fbf87;
+  --c-emerald-bg: rgba(63, 191, 135, 0.12);
+  --c-emerald-ring: rgba(63, 191, 135, 0.38);
+
+  --c-violet-fg: #a58bf5;
+  --c-violet-bg: rgba(165, 139, 245, 0.12);
+  --c-violet-ring: rgba(165, 139, 245, 0.38);
+
+  --c-orange-fg: #f2884b;
+  --c-orange-bg: rgba(242, 136, 75, 0.12);
+  --c-orange-ring: rgba(242, 136, 75, 0.38);
+
+  --c-teal-fg: #35bfbf;
+  --c-teal-bg: rgba(53, 191, 191, 0.12);
+  --c-teal-ring: rgba(53, 191, 191, 0.38);
+
+  --c-lime-fg: #a3cc48;
+  --c-lime-bg: rgba(163, 204, 72, 0.12);
+  --c-lime-ring: rgba(163, 204, 72, 0.38);
+
+  --c-indigo-fg: #7c86f0;
+  --c-indigo-bg: rgba(124, 134, 240, 0.12);
+  --c-indigo-ring: rgba(124, 134, 240, 0.38);
+
+  --c-fuchsia-fg: #e067c9;
+  --c-fuchsia-bg: rgba(224, 103, 201, 0.12);
+  --c-fuchsia-ring: rgba(224, 103, 201, 0.38);
+
+  /* ── 字号 / 字重 ────────────────────────────────────── */
+  --fs-xs: 12px;
+  --lh-xs: 1.5;
+  --fs-sm: 13px;
+  --lh-sm: 1.6;
+  --fs-base: 14px;
+  --lh-base: 1.7;
+  --fs-md: 16px;
+  --lh-md: 1.6;
+  --fs-lg: 20px;
+  --lh-lg: 1.4;
+  --fs-xl: 28px;
+  --lh-xl: 1.25;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-strong: 600;
+
+  --font-ui: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', Consolas, monospace;
+
+  /* ── 间距（只此 7 档）──────────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* ── 圆角 ───────────────────────────────────────────── */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-full: 999px;
+
+  /* ── 动效 ───────────────────────────────────────────── */
+  --dur-fast: 150ms;
+  --dur-base: 250ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --dur-breath: 1.8s;
+
+  /* ── 布局 ───────────────────────────────────────────── */
+  --roster-w: 18rem;
+  --insights-w: 22rem;
+  --stage-max: 1600px;
+}
+
+/* 全局基线：只做"不塌"和"字体"，不做任何组件样式 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 尊重系统偏好：所有循环动画（呼吸、光标）必须停 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

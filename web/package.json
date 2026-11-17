@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ai-panel/shared": "workspace:*",
     "vue": "^3.5.13"
   },
   "devDependencies": {
