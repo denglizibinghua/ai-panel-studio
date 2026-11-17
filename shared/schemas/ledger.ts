@@ -29,3 +29,30 @@ export const ledgerSchema = z
   })
   .strict();
 export type Ledger = z.infer<typeof ledgerSchema>;
+
+/**
+ * Magentic-One style decision item: every answer must ship a one-line reason,
+ * so `ledger.raw_json` stays reviewable without storing a prompt.
+ */
+const reasonSchema = z.string().trim().min(1).max(300);
+
+const decisionItemSchema = <T extends z.ZodTypeAny>(answer: T) =>
+  z.object({ reason: reasonSchema, answer }).strict();
+
+export const ledgerBooleanDecisionSchema = decisionItemSchema(z.boolean());
+export const ledgerNameDecisionSchema = decisionItemSchema(z.string().trim().min(1).max(32));
+export const ledgerSpeechTypeDecisionSchema = decisionItemSchema(shortSpeechTypeSchema);
+export const ledgerInstructionDecisionSchema = decisionItemSchema(z.string().trim().min(1).max(200));
+
+/** The exact JSON the host model must emit once per turn (ledger prompt). */
+export const llmLedgerDecisionSchema = z
+  .object({
+    is_request_satisfied: ledgerBooleanDecisionSchema,
+    is_in_loop: ledgerBooleanDecisionSchema,
+    is_progress_being_made: ledgerBooleanDecisionSchema,
+    next_speaker: ledgerNameDecisionSchema,
+    speech_type: ledgerSpeechTypeDecisionSchema,
+    instruction: ledgerInstructionDecisionSchema,
+  })
+  .strict();
+export type LlmLedgerDecision = z.infer<typeof llmLedgerDecisionSchema>;
