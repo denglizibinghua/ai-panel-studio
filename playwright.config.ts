@@ -24,6 +24,9 @@ const BASE_URL = `http://127.0.0.1:${WEB_PORT}`;
 export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
+  // Readiness + cold-start gates that `webServer.url` cannot express; see the
+  // file header in e2e/global-setup.ts. Not a test retry: failure here is fatal.
+  globalSetup: './e2e/global-setup.ts',
   // A discussion run is ~27 model calls even with the fake; leave headroom.
   timeout: 180_000,
   expect: { timeout: 20_000 },
