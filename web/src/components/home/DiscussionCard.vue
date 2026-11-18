@@ -6,7 +6,7 @@ import AppBadge from '../common/AppBadge.vue';
 import AppButton from '../common/AppButton.vue';
 import AppCard from '../common/AppCard.vue';
 import { expertColorStyle } from '../../styles/expert-colors';
-import type { MockDiscussion } from '../../mock/mock';
+import type { DiscussionSummary } from '../../api/types';
 
 /**
  * 首页讨论行（docs/DESIGN.md §6 列表行 / §10 Don't #1）。
@@ -19,7 +19,7 @@ import type { MockDiscussion } from '../../mock/mock';
  */
 const props = withDefaults(
   defineProps<{
-    discussion: MockDiscussion;
+    discussion: DiscussionSummary;
     variant?: 'active' | 'ended';
     guestColorIds?: readonly string[];
   }>(),
@@ -78,6 +78,7 @@ const statusView = computed(() => STATUS_VIEW[props.discussion.status]);
 
 const watchable = computed(
   () =>
+    props.discussion.status === 'draft' ||
     props.discussion.status === 'running' ||
     props.discussion.status === 'ready' ||
     props.discussion.status === 'generating',

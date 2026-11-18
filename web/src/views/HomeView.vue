@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { DiscussionStatus } from '@ai-panel/shared';
 import AppButton from '../components/common/AppButton.vue';
@@ -8,89 +8,81 @@ import AppEmpty from '../components/common/AppEmpty.vue';
 import DiscussionCard from '../components/home/DiscussionCard.vue';
 import NewDiscussionForm from '../components/home/NewDiscussionForm.vue';
 import PageShell from '../components/layout/PageShell.vue';
-import { mockDiscussions, mockRoster } from '../mock/mock';
+import { useHomeStore } from '../stores/home';
 
 /**
- * 首页（docs/DESIGN.md §7/§10，SESSION_MAP §S7）。
+ * 首页（docs/DESIGN.md §7/§10，SESSION_MAP §S8）。
  *
  * 视觉分工（v2）：
  * - 页头 56px + 页面主标题 xl：全站第一个层级锚点；
  * - 进行中 = 抬升行（bg-raised + hairline），已结束 = 平铺行（只有分隔线）；
- * - 每行给前 4 位专家的色点，颜色只走 expertColorStyle()。
+ * - 每行直接消费列表载荷的 `expert_color_ids`（空数组时 DiscussionCard 不画点）。
  *
- * S8 接线点不变：只有 mockDiscussions 换成 store。
+ * S8：列表、创建、错误全部走 `home` store，不再 import mock。
  */
 type ListState = 'default' | 'empty' | 'loading' | 'error';
 
+/** AC-3.2：draft 属于「进行中」（待生成），不再归档到已结束。 */
 const ACTIVE_STATUSES: ReadonlySet<DiscussionStatus> = new Set([
-  'running',
-  'ready',
+  'draft',
   'generating',
+  'ready',
+  'running',
 ]);
 
 const ENDED_STATUSES: ReadonlySet<DiscussionStatus> = new Set([
   'finished',
   'failed',
   'cancelled',
-  'draft',
 ]);
 
 const route = useRoute();
 const router = useRouter();
+const home = useHomeStore();
 
 /**
- * 仅供 QA 截图：?state=empty|loading|error 覆盖列表区，
- * 不在界面上暴露入口（不改路由表，只读 query）。
+ * 仅供 QA 截图：?state=empty|loading|error 覆盖**真实** store 状态，
+ * 只读 query，不暴露入口（S11 统一删除并重拍截图）。
  */
-const listState = computed<ListState>(() => {
+const stateOverride = computed<ListState | null>(() => {
   const raw = route.query.state;
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (value === 'empty' || value === 'loading' || value === 'error') {
     return value;
   }
+  return null;
+});
+
+const listState = computed<ListState>(() => {
+  if (stateOverride.value !== null) {
+    return stateOverride.value;
+  }
+  if (home.loading && home.list.length === 0) {
+    return 'loading';
+  }
+  // 列表已经加载过时，create / 其它动作的失败只用行内提示，不能把列表整页换成错误态。
+  if (home.error !== null && home.list.length === 0) {
+    return 'error';
+  }
   return 'default';
 });
 
 const activeDiscussions = computed(() =>
-  mockDiscussions.filter((discussion) => ACTIVE_STATUSES.has(discussion.status)),
+  listState.value === 'empty'
+    ? []
+    : home.list.filter((discussion) => ACTIVE_STATUSES.has(discussion.status)),
 );
 
 const endedDiscussions = computed(() =>
-  mockDiscussions.filter((discussion) => ENDED_STATUSES.has(discussion.status)),
+  listState.value === 'empty'
+    ? []
+    : home.list.filter((discussion) => ENDED_STATUSES.has(discussion.status)),
 );
 
-const activeCount = computed(() => (listState.value === 'empty' ? 0 : activeDiscussions.value.length));
-const endedCount = computed(() => (listState.value === 'empty' ? 0 : endedDiscussions.value.length));
-
-/**
- * 列表卡的专家色点。
- *
- * 契约里的 `DiscussionSummary` 不含 guests（五流隔离），首页拿不到真实 color_id。
- * 这里优先用 mock 阵容的真实颜色；其余讨论按 id 在 mock 专家色里循环取前 N 个，
- * 只为 S7.5 的视觉走查（不从 shared 取值，避免把 zod 打进客户端包）。
- * S8 若列表接口仍不带颜色，DiscussionCard 在 guestColorIds 为空时不渲染点。
- */
-const MOCK_EXPERT_COLORS: readonly string[] = mockRoster
-  .filter((guest) => guest.role === 'expert')
-  .map((guest) => guest.color_id);
-
-function colorIdsOf(discussionId: number, expertCount: number): readonly string[] {
-  const roster = mockRoster.filter(
-    (guest) => guest.discussion_id === discussionId && guest.role === 'expert',
-  );
-  if (roster.length > 0) {
-    return roster.slice(0, 4).map((guest) => guest.color_id);
-  }
-  const offset = discussionId % MOCK_EXPERT_COLORS.length;
-  const take = Math.max(1, Math.min(4, expertCount));
-  return Array.from(
-    { length: take },
-    (_, index) => MOCK_EXPERT_COLORS[(offset + index) % MOCK_EXPERT_COLORS.length]!,
-  );
-}
+const activeCount = computed(() => activeDiscussions.value.length);
+const endedCount = computed(() => endedDiscussions.value.length);
 
 const formOpen = ref(false);
-const generating = ref(false);
 
 function openForm(): void {
   formOpen.value = true;
@@ -98,25 +90,29 @@ function openForm(): void {
 
 function closeForm(): void {
   formOpen.value = false;
-  generating.value = false;
 }
 
-/**
- * S7 只有壳：不发请求、不设定时器。
- * 提交后表单保持展开，generating 固定为 true，进行中组渲染 3 张骨架行。
- * S8 在这里接 store / fetch：拿到真实嘉宾后关闭 generating 并插入新讨论。
- */
-function handleSubmit(): void {
-  generating.value = true;
+/** create → generate 成功后进确认页；失败留在首页，错误块由 store.error 驱动。 */
+async function handleSubmit(payload: { topic: string; expertCount: number }): Promise<void> {
+  const id = await home.create(payload);
+  if (id === null) {
+    return;
+  }
+  await router.push({ name: 'guest-confirm', params: { id } });
 }
 
-/**
- * 错误态下的「重试」：shell 阶段没有后端，清掉 ?state 覆盖回到正常列表。
- * S8 接真实请求后，这里改成重新拉取。
- */
 function retry(): void {
-  void router.replace({ name: 'home', query: {} });
+  void (async (): Promise<void> => {
+    if (route.query.state !== undefined) {
+      await router.replace({ name: 'home', query: {} });
+    }
+    await home.load();
+  })();
 }
+
+onMounted(() => {
+  void home.load();
+});
 </script>
 
 <template>
@@ -144,10 +140,18 @@ function retry(): void {
         <NewDiscussionForm
           v-if="formOpen"
           class="home__form"
-          :generating="generating"
+          :generating="home.busy"
           @submit="handleSubmit"
           @cancel="closeForm"
         />
+
+        <p
+          v-if="home.error !== null && listState === 'default'"
+          class="home__inline-error"
+          role="alert"
+        >
+          {{ home.error }}
+        </p>
 
         <div v-if="listState === 'loading'" class="home__rows" aria-busy="true">
           <AppCard v-for="slot in 3" :key="slot" class="home__skeleton" />
@@ -156,7 +160,7 @@ function retry(): void {
         <AppEmpty
           v-else-if="listState === 'error'"
           title="加载失败"
-          hint="讨论列表暂时无法加载，请稍后重试。"
+          :hint="home.error ?? '讨论列表暂时无法加载，请稍后重试。'"
         >
           <AppButton variant="secondary" @click="retry">重试</AppButton>
         </AppEmpty>
@@ -169,7 +173,7 @@ function retry(): void {
             </div>
 
             <div v-if="listState === 'default'" class="home__rows">
-              <template v-if="generating">
+              <template v-if="home.busy">
                 <AppCard
                   v-for="slot in 3"
                   :key="`pending-${slot}`"
@@ -181,12 +185,12 @@ function retry(): void {
                 :key="discussion.id"
                 :discussion="discussion"
                 variant="active"
-                :guest-color-ids="colorIdsOf(discussion.id, discussion.expert_count)"
+                :guest-color-ids="discussion.expert_color_ids"
               />
             </div>
 
             <AppEmpty
-              v-if="listState === 'empty' || (activeDiscussions.length === 0 && !generating)"
+              v-if="listState === 'empty' || (activeDiscussions.length === 0 && !home.busy)"
               class="home__empty"
               title="暂无进行中的讨论"
               hint="点击右上角「发起新讨论」，从一个议题开始。"
@@ -205,7 +209,7 @@ function retry(): void {
                 :key="discussion.id"
                 :discussion="discussion"
                 variant="ended"
-                :guest-color-ids="colorIdsOf(discussion.id, discussion.expert_count)"
+                :guest-color-ids="discussion.expert_color_ids"
               />
             </div>
 
@@ -317,6 +321,14 @@ function retry(): void {
 .home__form {
   width: 100%;
   max-width: var(--form-max);
+}
+
+.home__inline-error {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
 .home__section {

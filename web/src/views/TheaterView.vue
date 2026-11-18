@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import AppEmpty from '../components/common/AppEmpty.vue';
@@ -8,18 +8,10 @@ import ConsensusBoard from '../components/theater/ConsensusBoard.vue';
 import HostBar from '../components/theater/HostBar.vue';
 import RosterPanel from '../components/theater/RosterPanel.vue';
 import TranscriptFeed from '../components/theater/TranscriptFeed.vue';
-import {
-  mockAgentStatus,
-  mockConsensus,
-  mockDiscussions,
-  mockDivergence,
-  mockRoster,
-  mockTurns,
-} from '../mock/mock';
-import type { DiscussionStatus } from '@ai-panel/shared';
+import { useDiscussionStore } from '../stores/discussion';
 
 /**
- * 演播厅（docs/DESIGN.md §7 / §10，SESSION_MAP §S7）。
+ * 演播厅（docs/DESIGN.md §7 / §10，SESSION_MAP §S8）。
  *
  * 布局纪律（上一版就是死在这里）：
  * 1. 三层：.studio-shell（容器）> .studio-frame（页框）> .studio（栅格）。
@@ -27,20 +19,26 @@ import type { DiscussionStatus } from '@ai-panel/shared';
  * 3. 页框与首页/确认页同源：max-width 90rem + padding-inline 24/16 —— 三页左边缘同一条线。
  * 4. 页面永不滚动：shell 固定 100dvh + overflow hidden，滚动只发生在面板 body。
  * 5. 左右栏不留死区：左栏底部有收口信息条，右栏是「简报」（进展 / 专家 / 共识 / 分歧）。
+ *
+ * S8：视觉冻结，只换数据来源 —— 所有面板读 `discussion` store，不再 import mock。
  */
 const props = defineProps<{ id: string }>();
 
 const route = useRoute();
 const router = useRouter();
+const store = useDiscussionStore();
 
-/** NaN / 未知 id 都回落到第一条（mock 至少有一条数据）。 */
-const discussion = computed(() => {
-  const numericId = Number(props.id);
-  if (!Number.isFinite(numericId)) return mockDiscussions[0] ?? null;
-  return mockDiscussions.find((item) => item.id === numericId) ?? mockDiscussions[0] ?? null;
-});
+const numericId = computed(() => Number(props.id));
 
-/** QA 用：?state=empty 空态、?state=failed 失败态（只影响数据展示，不改壳）。 */
+const discussion = computed(() => store.detail);
+const status = computed(() => store.status);
+const statusLabel = computed(() => store.statusLabel);
+const canCancel = computed(() => store.canCancel);
+
+/**
+ * QA 用：?state=empty 空态、?state=failed 失败态。
+ * S8 起覆盖的是**真实 store 状态**，不再是无请求的假开关。
+ */
 type QaState = 'empty' | 'failed' | null;
 
 const qaState = computed<QaState>(() => {
@@ -49,48 +47,42 @@ const qaState = computed<QaState>(() => {
   return value === 'empty' || value === 'failed' ? value : null;
 });
 
-const STATUS_LABEL: Record<DiscussionStatus, string> = {
-  draft: '待生成',
-  generating: '生成中',
-  ready: '待开始',
-  running: '进行中',
-  finished: '已结束',
-  failed: '失败',
-  cancelled: '已取消',
-};
-
-/** 取消是本地演示行为：mock 阶段不请求后端，「取消讨论」只把本场状态改掉。 */
-const localStatus = ref<DiscussionStatus | null>(null);
-const status = computed<DiscussionStatus>(
-  () => localStatus.value ?? discussion.value?.status ?? 'draft',
-);
-const statusLabel = computed(() => STATUS_LABEL[status.value]);
-const canCancel = computed(
-  () =>
-    status.value === 'draft' ||
-    status.value === 'generating' ||
-    status.value === 'ready' ||
-    status.value === 'running',
-);
-
 /** AC-1.13：专家发言上限 20 条；主持人开场 / 追问 / 总结不计入这个数。 */
 const EXPERT_TURN_CAP = 20;
 
-const displayedTurns = computed(() => (qaState.value === 'empty' ? [] : mockTurns));
-const consensusPoints = computed(() => (qaState.value === 'empty' ? [] : mockConsensus));
-const divergencePoints = computed(() => (qaState.value === 'empty' ? [] : mockDivergence));
+/** 打不开（404 / 详情请求失败）：整页级错误，与「本场跑失败」区分。 */
+const loadFailure = computed(
+  () => store.loadError !== null && store.detail === null,
+);
+
+/** 失败面板：打不开 / state.failed / run.failed / QA 覆盖。 */
+const failedView = computed(
+  () =>
+    qaState.value === 'failed' ||
+    loadFailure.value ||
+    store.status === 'failed' ||
+    store.errorCode !== null,
+);
+
+const failureTitle = computed(() =>
+  loadFailure.value ? '无法打开这场讨论' : '本场讨论失败',
+);
+const failureHint = computed(() =>
+  loadFailure.value ? (store.loadError ?? '讨论不存在') : '可以重新加入本场讨论',
+);
+
+const displayedTurns = computed(() => (qaState.value === 'empty' ? [] : store.turns));
+const consensusPoints = computed(() => (qaState.value === 'empty' ? [] : store.consensus));
+const divergencePoints = computed(() => (qaState.value === 'empty' ? [] : store.divergence));
 
 /**
- * 与 server `countExpertTurns()` 同口径：只数专家（role='expert'）的发言。
- * 简报的进度条和底部运输条都用它；用 `displayedTurns.length` 会把主持人开场、
- * 每 4 条一次的追问和结束总结算进去（真实一场约 27 条，除 20 会得出 27/20）。
+ * store 的 `expertTurnCount` 只数专家 `turn.done`（不含主持开场 / 追问 / 总结），
+ * 与 `run.finished.expert_turn_count` 同口径 —— 分母 20 才对得上（AC-1.13）。
+ * `?state=empty` 时进度归零，配合 QA 截图。
  */
-const expertTurnCount = computed(() => {
-  const expertIds = new Set(
-    mockRoster.filter((guest) => guest.role === 'expert').map((guest) => guest.id),
-  );
-  return displayedTurns.value.filter((turn) => expertIds.has(turn.guest_id)).length;
-});
+const expertTurnCount = computed(() =>
+  qaState.value === 'empty' ? 0 : store.expertTurnCount,
+);
 
 /* ── 响应式状态 ──────────────────────────────────────────
  * 断点判断 100% 在 CSS：@media 改 .studio 自己的栅格，@container 改面板内部。
@@ -124,17 +116,57 @@ function toggleDrawer(): void {
 }
 
 function cancelDiscussion(): void {
-  localStatus.value = 'cancelled';
+  void store.cancel();
 }
 
 function exitStudio(): void {
   void router.push({ name: 'home' });
 }
 
-/** 失败态「重试」：清掉 QA 参数，回到正常数据（mock 阶段没有真实请求）。 */
+/** 失败态「重试」：重新 open（重放事件、重建五个面板），不靠剥 query 参数。 */
 function retry(): void {
-  void router.replace({ query: { ...route.query, state: undefined } });
+  if (Number.isFinite(numericId.value)) {
+    void store.open(numericId.value);
+  }
 }
+
+onMounted(() => {
+  if (Number.isFinite(numericId.value)) {
+    void store.open(numericId.value);
+  }
+});
+
+/**
+ * 直播跟随：新发言落进 store 后，如果观看者本来就在底部附近，就继续贴底。
+ * 组件（TranscriptFeed）保持冻结，只在视图层操作它已有的滚动容器
+ * `.app-panel__body`；用户主动往上翻阅读时（离开底部 >120px）不抢滚动条。
+ */
+const feedRef = ref<InstanceType<typeof TranscriptFeed> | null>(null);
+
+async function followTranscript(): Promise<void> {
+  const root = feedRef.value?.$el;
+  if (!(root instanceof HTMLElement)) {
+    return;
+  }
+  const body = root.querySelector('.app-panel__body');
+  if (!(body instanceof HTMLElement)) {
+    return;
+  }
+  // watch 默认 flush:'pre'，此刻 DOM 还是追加前的旧高度 —— 用它判断
+  // 「更新前是否贴在底部」，才是可靠的用户意图；拿更新后的高度判断会把
+  // 大卡片（总结）误判成「用户往上翻了」。
+  const distanceBefore = body.scrollHeight - body.scrollTop - body.clientHeight;
+  await nextTick();
+  if (distanceBefore < 160) {
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+watch(() => store.turns.length, () => void followTranscript());
+
+onBeforeUnmount(() => {
+  store.close();
+});
 </script>
 
 <template>
@@ -170,16 +202,17 @@ function retry(): void {
         <RosterPanel
           class="studio__roster"
           :class="{ 'studio__roster--active': activeTab === 'roster' }"
-          :guests="mockRoster"
-          :status-map="mockAgentStatus"
+          :guests="store.guests"
+          :status-map="store.agentStatusMap"
         />
 
         <TranscriptFeed
-          v-if="qaState !== 'failed'"
+          v-if="!failedView"
+          ref="feedRef"
           class="studio__stage"
           :class="{ 'studio__stage--active': activeTab === 'stage' }"
           :turns="displayedTurns"
-          :guests="mockRoster"
+          :guests="store.guests"
         />
         <AppPanel
           v-else
@@ -190,8 +223,8 @@ function retry(): void {
         >
           <AppEmpty
             class="studio__failed"
-            title="本场讨论失败"
-            hint="可以重新加入本场讨论"
+            :title="failureTitle"
+            :hint="failureHint"
           >
             <AppButton variant="secondary" size="sm" @click="retry">重试</AppButton>
           </AppEmpty>
@@ -207,8 +240,8 @@ function retry(): void {
           <ConsensusBoard
             :consensus="consensusPoints"
             :divergence="divergencePoints"
-            :guests="mockRoster"
-            :status-map="mockAgentStatus"
+            :guests="store.guests"
+            :status-map="store.agentStatusMap"
             :turns="displayedTurns"
             :expert-turns="expertTurnCount"
             :total-turns="EXPERT_TURN_CAP"
@@ -226,6 +259,9 @@ function retry(): void {
         <div class="studio__transport">
           <p class="transport__meta">
             {{ expertTurnCount }} / {{ EXPERT_TURN_CAP }} 条专家发言 · {{ statusLabel }}
+          </p>
+          <p v-if="store.cancelError !== null" class="transport__error" role="alert">
+            {{ store.cancelError }}
           </p>
           <AppButton
             variant="danger"
@@ -332,6 +368,17 @@ function retry(): void {
   line-height: var(--lh-xs);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport__error {
+  min-width: 0;
+  margin: 0 0 0 auto;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  color: var(--danger);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -1,31 +1,29 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import AppCard from '../components/common/AppCard.vue';
 import AppEmpty from '../components/common/AppEmpty.vue';
 import GuestCard from '../components/guest/GuestCard.vue';
 import PageShell from '../components/layout/PageShell.vue';
-import { mockRoster } from '../mock/mock';
+import { useHomeStore } from '../stores/home';
 
 /**
- * 确认本场阵容（docs/DESIGN.md §7 / §10，SESSION_MAP §S7）。
+ * 确认本场阵容（docs/DESIGN.md §7 / §10，SESSION_MAP §S8）。
  *
  * 与首页同一页框、同一页头高度、同一标题字号阶（xl / sm）。
- * S7 只做壳：不请求、不进 store，名单直接读 mockRoster。
- * `?state=loading|error` 仅用于截图走查，不在界面上暴露。
+ * S8：阵容来自 `GET /api/discussions/{id}` 的 `guests`；重新生成与确认都走 store。
+ * `?state=loading|error` 仍是纯 QA 开关，现在覆盖真实 store 状态。
  */
 const props = defineProps<{ id: string }>();
 
 const router = useRouter();
 const route = useRoute();
+const home = useHomeStore();
 
-const roster = computed(() => {
-  const discussionId = Number(props.id);
-  if (!Number.isFinite(discussionId)) return mockRoster;
-  const matched = mockRoster.filter((guest) => guest.discussion_id === discussionId);
-  return matched.length > 0 ? matched : mockRoster;
-});
+const discussionId = computed(() => Number(props.id));
+
+const roster = computed(() => home.detail?.guests ?? []);
 
 const hostCount = computed(() => roster.value.filter((guest) => guest.role === 'host').length);
 const expertCount = computed(() => roster.value.filter((guest) => guest.role === 'expert').length);
@@ -33,30 +31,91 @@ const rosterSummary = computed(() => `${expertCount.value} 位专家 + ${hostCou
 
 const pageState = computed<'ready' | 'loading' | 'error'>(() => {
   const raw = route.query.state;
-  return raw === 'loading' || raw === 'error' ? raw : 'ready';
+  if (raw === 'loading' || raw === 'error') {
+    return raw;
+  }
+  // 只有「详情还没拿到」才算页面级错误；confirm / start 的失败是就地提示，
+  // 不能把已经加载好的阵容整页换掉（否则 409 之后用户既看不到阵容也无法重试）。
+  if (home.detail === null) {
+    return home.error !== null ? 'error' : 'loading';
+  }
+  return 'ready';
 });
 
 const selectedId = ref<number | null>(null);
+
+/**
+ * 阵容是否已锁定（ready / running），以及 confirm 刚成功但 start 还没成功。
+ * 用它把「确认」和「开始」拆成两步：start 失败后重试只重发 start，
+ * 不会二次 confirm 撞 409 ALREADY_LOCKED。
+ */
+const rosterLocked = ref(false);
+const isLocked = computed(
+  () =>
+    rosterLocked.value ||
+    home.detail?.status === 'ready' ||
+    home.detail?.status === 'running',
+);
+const primaryLabel = computed(() => (isLocked.value ? '开始讨论' : '确认进入演播厅'));
 
 function goHome(): void {
   void router.push({ name: 'home' });
 }
 
-function regenerate(): void {
+async function regenerate(): Promise<void> {
   selectedId.value = null;
+  const id = discussionId.value;
+  if (!Number.isFinite(id)) {
+    return;
+  }
+  const regenerated = await home.regenerate(id);
+  if (regenerated) {
+    await home.fetchDetail(id);
+  }
 }
 
-function confirmRoster(): void {
-  void router.push({ name: 'theater', params: { id: props.id } });
+async function confirmRoster(): Promise<void> {
+  const id = discussionId.value;
+  if (!Number.isFinite(id)) {
+    return;
+  }
+  if (home.detail?.status === 'running') {
+    await router.push({ name: 'theater', params: { id: props.id } });
+    return;
+  }
+  if (!isLocked.value) {
+    const confirmed = await home.confirmRoster(id);
+    if (!confirmed) {
+      return;
+    }
+    rosterLocked.value = true;
+  }
+  const started = await home.start(id);
+  if (started) {
+    await router.push({ name: 'theater', params: { id: props.id } });
+  }
 }
 
-function retry(): void {
-  void router.replace({ query: { ...route.query, state: undefined } });
+async function retry(): Promise<void> {
+  if (route.query.state !== undefined) {
+    await router.replace({ query: { ...route.query, state: undefined } });
+  }
+  const id = discussionId.value;
+  if (Number.isFinite(id)) {
+    await home.fetchDetail(id);
+  }
 }
 
 function onSelect(guestId: number): void {
   selectedId.value = guestId;
 }
+
+onMounted(() => {
+  const id = discussionId.value;
+  if (Number.isFinite(id)) {
+    void home.fetchDetail(id);
+  }
+});
 </script>
 
 <template>
@@ -85,7 +144,7 @@ function onSelect(guestId: number): void {
       </div>
 
       <div v-else-if="pageState === 'error'" class="confirm__error">
-        <AppEmpty title="阵容加载失败" hint="请重试生成嘉宾">
+        <AppEmpty title="阵容加载失败" :hint="home.error ?? '请重试生成嘉宾'">
           <AppButton variant="secondary" @click="retry">重试</AppButton>
         </AppEmpty>
       </div>
@@ -103,9 +162,14 @@ function onSelect(guestId: number): void {
     </main>
 
     <footer class="confirm__footer">
+      <p v-if="home.error !== null && pageState === 'ready'" class="confirm__error-line" role="alert">
+        {{ home.error }}
+      </p>
       <div class="confirm__actions">
-        <AppButton variant="secondary" @click="regenerate">重新生成</AppButton>
-        <AppButton variant="primary" @click="confirmRoster">确认进入演播厅</AppButton>
+        <AppButton variant="secondary" :disabled="home.busy" @click="regenerate">重新生成</AppButton>
+        <AppButton variant="primary" :disabled="home.busy" @click="confirmRoster">
+          {{ primaryLabel }}
+        </AppButton>
       </div>
     </footer>
   </PageShell>
@@ -199,8 +263,21 @@ function onSelect(guestId: number): void {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: var(--sp-4);
   min-height: var(--header-h);
   border-top: 1px solid var(--line-subtle);
+}
+
+.confirm__error-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--danger);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .confirm__actions {

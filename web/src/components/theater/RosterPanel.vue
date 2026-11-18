@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import AppEmpty from '../common/AppEmpty.vue';
 import AppPanel from '../common/AppPanel.vue';
 import ExpertCard from './ExpertCard.vue';
-import type { MockAgentStatus } from '../../mock/mock';
+import type { AgentStatusView } from '../../api/types';
 import type { AgentState, Guest } from '@ai-panel/shared';
 
 /**
@@ -13,7 +13,7 @@ import type { AgentState, Guest } from '@ai-panel/shared';
  */
 const props = defineProps<{
   guests: Guest[];
-  statusMap: Record<number, MockAgentStatus>;
+  statusMap: Record<number, AgentStatusView>;
 }>();
 
 const hostCount = computed(() => props.guests.filter((guest) => guest.role === 'host').length);

@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import AppBadge from '../common/AppBadge.vue';
 import AppPanel from '../common/AppPanel.vue';
 import { expertColorStyle } from '../../styles/expert-colors';
-import type { MockAgentStatus } from '../../mock/mock';
+import type { AgentStatusView } from '../../api/types';
 import type {
   AgentState,
   ConsensusPoint,
@@ -36,7 +36,7 @@ const props = withDefaults(
     consensus: ConsensusPoint[];
     divergence: DivergencePoint[];
     guests: Guest[];
-    statusMap?: Record<number, MockAgentStatus>;
+    statusMap?: Record<number, AgentStatusView>;
     turns?: Turn[];
     /** 必须是 expert_turn_count，不是 turns.length（AC-1.13） */
     expertTurns: number;
