@@ -77,7 +77,30 @@ function countExpertTurns(db: Db, discussionId: number): number {
   return row.count;
 }
 
+/**
+ * In-process guard: the app is a single Fastify process, so a module-level Set
+ * is enough to keep a second concurrent retry from duplicating the model call.
+ * Claimed synchronously before the first `await` and released in `finally`.
+ */
+const retryInFlight = new Set<number>();
+
 export async function retrySummary(
+  db: Db,
+  discussionId: number,
+  deps: RetrySummaryDeps,
+): Promise<RetrySummaryResponse> {
+  if (retryInFlight.has(discussionId)) {
+    throw new DiscussionError('INVALID_STATE_TRANSITION', '该讨论的总结重试正在进行中');
+  }
+  retryInFlight.add(discussionId);
+  try {
+    return await retrySummaryOnce(db, discussionId, deps);
+  } finally {
+    retryInFlight.delete(discussionId);
+  }
+}
+
+async function retrySummaryOnce(
   db: Db,
   discussionId: number,
   deps: RetrySummaryDeps,

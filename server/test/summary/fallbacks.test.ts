@@ -344,4 +344,94 @@ describe('S9 retry-summary — preconditions and success path', () => {
 
     await app.close();
   });
+
+  it('serializes concurrent retries: one 200, one 409, one summary call', async () => {
+    const db = tempDb('retry-concurrent');
+    const seed = seedReadyDiscussion(db, { expertCount: 2 });
+    const at = new Date().toISOString();
+    db.prepare(
+      "UPDATE discussions SET status = 'failed', error_code = 'ALL_SPEAKERS_FAILED', finished_at = ? WHERE id = ?",
+    ).run(at, seed.discussionId);
+    db.prepare(
+      `INSERT INTO turns (discussion_id, guest_id, turn_no, speech_type, content, created_at)
+       VALUES (?, ?, 1, 'opening', ?, ?)`,
+    ).run(seed.discussionId, seed.hostId, OPENING, at);
+
+    const summaryRequests: ChatJsonRequest[] = [];
+    // A hand-built transport (not the harness) is required here: the harness's
+    // summary branch stringifies the script's return value without awaiting it,
+    // which turns a delayed summary into `{"content":{}}`.
+    const llm = createDeepSeekClient({
+      db,
+      transport: async (request) => {
+        if (request.module !== 'summary') {
+          throw new Error(`unexpected module: ${request.module}`);
+        }
+        summaryRequests.push(request);
+        await sleep(150);
+        return { raw: JSON.stringify({ content: VALID_SUMMARY }) };
+      },
+    });
+    const app = buildApp({ db, llm });
+
+    const [first, second] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: `/api/discussions/${seed.discussionId}/retry-summary`,
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/discussions/${seed.discussionId}/retry-summary`,
+      }),
+    ]);
+
+    expect([first.statusCode, second.statusCode].sort((a, b) => a - b)).toEqual([200, 409]);
+    const loser = first.statusCode === 409 ? first : second;
+    expect(loser.json()).toMatchObject({ code: 'INVALID_STATE_TRANSITION' });
+
+    // The loser was rejected by the guard before any model work.
+    expect(summaryRequests).toHaveLength(1);
+    expect(
+      count(
+        db,
+        "SELECT COUNT(*) AS count FROM llm_calls WHERE discussion_id = ? AND module = 'summary'",
+        seed.discussionId,
+      ),
+    ).toBe(1);
+    expect(
+      count(
+        db,
+        "SELECT COUNT(*) AS count FROM turns WHERE discussion_id = ? AND speech_type = 'summary'",
+        seed.discussionId,
+      ),
+    ).toBe(1);
+
+    const row = db
+      .prepare('SELECT status, error_code, summary_text FROM discussions WHERE id = ?')
+      .get(seed.discussionId) as {
+      status: string;
+      error_code: string | null;
+      summary_text: string;
+    };
+    expect(row.status).toBe('finished');
+    expect(row.error_code).toBeNull();
+    expect(row.summary_text).toBe(VALID_SUMMARY);
+
+    // INV-9: the snapshot matches the authoritative summary turn.
+    const summaryTurn = db
+      .prepare("SELECT content FROM turns WHERE discussion_id = ? AND speech_type = 'summary'")
+      .get(seed.discussionId) as { content: string } | undefined;
+    expect(summaryTurn?.content).toBe(row.summary_text);
+
+    const finished = db
+      .prepare("SELECT payload FROM events WHERE discussion_id = ? AND type = 'run.finished'")
+      .get(seed.discussionId) as { payload: string } | undefined;
+    expect(JSON.parse(finished?.payload ?? '{}')).toMatchObject({
+      reason: 'retry_summary',
+      expert_turn_count: 0,
+      summary_failed: false,
+    });
+
+    await app.close();
+  });
 });
