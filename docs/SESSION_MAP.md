@@ -823,6 +823,19 @@ e2e/**, playwright.config.ts, server/src/llm/fake.ts, server/src/llm/index.ts
 
 ## S11 · 文档与提交（人做，不用 AI 或只让它润色）
 
+**S10 之后的增量（开工先读，顺序不能反）**
+
+0. **先取证，再写文档。** 主库现在 `llm_calls=0`；之前那 20 条是 fake 失败行，已删、不可用。
+   用环境变量里的真 Key 跑一场（1–3 分钟），再从库里取证据：
+   `SELECT module, model, is_retry, success, COUNT(*) FROM llm_calls GROUP BY 1,2,3,4;`
+   必须出现 `model='deepseek-flash'`。`WORK_REPORT` 只引用这一次；跑前把 `server/data/app.db`
+   复制到 `D:\temp\`，跑坏可还原。
+0b. 删 `?state=` 开关后**必须重拍截图**（1440/1280/390 × 三页），截图要来自真实数据；
+   种子场次 `session_id=NULL` 是只读的，演示/截图走「发起新讨论」。
+0c. `web/src/mock/mock.ts` 已无引用（E2E 走真实 API + fake provider）：删掉，或写清保留理由。
+0d. 收尾前逐条过 `docs/OPEN_ISSUES.md`：E2E 首跑的 `NETWORK_ERROR`、`pnpm check` 一次未复现的失败，
+   都只按「已知/未复现」记录，别写成已解决。
+
 不是 AI Session，是人的收口。照 `AGENTS.md` §8 的 DoD 逐条打勾：
 
 - [ ] `docs/PROMPT_LOG.md` 至少 5 段，四阶段齐全，每段有"卡点 + 怎么修"
