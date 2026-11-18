@@ -27,8 +27,10 @@ const TRANSITIONS: Record<DiscussionStatus, readonly DiscussionStatus[]> = {
   generating: ['draft', 'failed', 'cancelled'],
   ready: ['running', 'cancelled'],
   running: ['finished', 'failed', 'cancelled'],
+  // S9 retry-summary: the only edge out of `failed`, and only for
+  // ALL_SPEAKERS_FAILED (enforced by modules/discussion/retry.ts).
+  failed: ['finished'],
   finished: [],
-  failed: [],
   cancelled: [],
 };
 
@@ -63,6 +65,8 @@ export interface TransitionOptions {
   finished_at?: string;
   /** Only `failed` carries one; `cancelled` must stay NULL (AC-1.24). */
   error_code?: ErrorCode | null;
+  /** retry-summary leaves `failed` with a successful run: clear the old code. */
+  clear_error_code?: boolean;
 }
 
 export interface TransitionResult {
@@ -98,6 +102,7 @@ export function transitionInTx(
             finished_at = COALESCE(?, finished_at),
             error_code  = CASE
                             WHEN ? = 'cancelled' THEN NULL
+                            WHEN ? = 1 THEN NULL
                             WHEN ? IS NULL      THEN error_code
                             ELSE ?
                           END
@@ -108,6 +113,7 @@ export function transitionInTx(
     options.started_at ?? null,
     options.finished_at ?? null,
     to,
+    options.clear_error_code === true ? 1 : 0,
     options.error_code ?? null,
     options.error_code ?? null,
     discussionId,

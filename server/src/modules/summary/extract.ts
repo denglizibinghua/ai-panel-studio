@@ -49,6 +49,7 @@ const SYSTEM_PROMPT = [
   '只输出 JSON：{"consensus":["..."],"divergence":["..."]}。',
   '每条必须是中文一句话，不超过 120 字；没有就返回空数组。',
   '共识写成所有或多数人都认可的判断；分歧必须写明对立的两面。',
+  '如果有明确的支持者，请在句子里写出其姓名（与阵容一致）；不要臆造姓名。',
   '不要复述原句，不要评价，不要输出 JSON 以外的任何文字。',
 ].join('\n');
 
@@ -136,6 +137,8 @@ export interface PersistExtractionDeps {
   roundNo: number;
   points: ExtractedPoints;
   at: string;
+  /** Locked lineup; names mentioned in a point map back to `guests.id`. */
+  roster?: LedgerRosterMember[];
   bus?: EventBus;
 }
 
@@ -144,10 +147,31 @@ interface PointRow {
   text: string;
 }
 
+/**
+ * F5 "谁同意" support: only exact roster names are accepted. Unknown names are
+ * dropped (never guessed), and a one-character name is ignored to avoid
+ * accidental substring hits.
+ */
+export function matchSupportGuestIds(
+  text: string,
+  roster: readonly LedgerRosterMember[] | undefined,
+): number[] {
+  if (roster === undefined) {
+    return [];
+  }
+  const ids = new Set<number>();
+  for (const member of roster) {
+    if (member.name.length >= 2 && text.includes(member.name)) {
+      ids.add(member.id);
+    }
+  }
+  return [...ids].sort((left, right) => left - right);
+}
+
 const insertSql = (table: string): string =>
   `INSERT INTO ${table}
      (discussion_id, text, status, support_guest_ids, round_no, updated_seq, created_at, updated_at)
-   VALUES (?, ?, 'provisional', '[]', ?, 1, ?, ?)
+   VALUES (?, ?, 'provisional', ?, ?, 1, ?, ?)
    ON CONFLICT(discussion_id, text) DO NOTHING`;
 
 /**
@@ -169,7 +193,15 @@ export function persistExtraction(db: Db, deps: PersistExtractionDeps): Persiste
     const type = kind === 'consensus' ? 'consensus.added' : 'divergence.added';
 
     for (const text of texts) {
-      const info = insert.run(deps.discussionId, text, deps.roundNo, deps.at, deps.at);
+      const support = matchSupportGuestIds(text, deps.roster);
+      const info = insert.run(
+        deps.discussionId,
+        text,
+        JSON.stringify(support),
+        deps.roundNo,
+        deps.at,
+        deps.at,
+      );
       if (info.changes === 0) {
         continue;
       }
@@ -184,7 +216,7 @@ export function persistExtraction(db: Db, deps: PersistExtractionDeps): Persiste
         point_id: row.id,
         text: row.text,
         status: 'provisional',
-        support_guest_ids: [],
+        support_guest_ids: support,
         round_no: deps.roundNo,
       });
       const event = appendEventInTx(db, deps.discussionId, type, payload, deps.at);

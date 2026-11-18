@@ -14,6 +14,7 @@ import { runDiscussion } from '../turn/runner';
 import { cancelDiscussion } from './cancel';
 import { DiscussionError } from './errors';
 import { createRunRegistry, type RunRegistry } from './registry';
+import { retrySummary } from './retry';
 import {
   createDiscussion,
   createDiscussionBodySchema,
@@ -168,5 +169,37 @@ export function discussionRoutes(
         throw error;
       }
     });
+
+    // S9: the only legal way out of `failed` (ALL_SPEAKERS_FAILED only).
+    app.post<{ Params: { id: string } }>(
+      '/api/discussions/:id/retry-summary',
+      async (request, reply) => {
+        const discussionId = parseDiscussionId(request.params.id);
+        if (discussionId === null) {
+          return reply.status(404).send(NOT_FOUND_BODY);
+        }
+        const db = opts.db();
+        if (loadDiscussionStatus(db, discussionId) === null) {
+          return reply.status(404).send(NOT_FOUND_BODY);
+        }
+        if (deps.llm === undefined && !isLlmConfigured()) {
+          return reply
+            .status(500)
+            .send({ code: 'LLM_NOT_CONFIGURED', message: '未配置 DEEPSEEK_API_KEY' });
+        }
+        try {
+          const llm = deps.llm ?? createDeepSeekClient({ db });
+          const body = await retrySummary(db, discussionId, { llm, bus: opts.bus });
+          return reply.status(200).send(body);
+        } catch (error) {
+          if (error instanceof DiscussionError) {
+            return reply
+              .status(statusForError(error.code))
+              .send({ code: error.code, message: error.message });
+          }
+          throw error;
+        }
+      },
+    );
   };
 }

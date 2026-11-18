@@ -37,7 +37,7 @@ function count(db: Db, sql: string, ...params: unknown[]): number {
 const OPENING = '开场白：本场讨论围绕 AI 是否取代初级程序员展开，核心分歧在成本与体验。';
 
 describe('runDiscussion — full run', () => {
-  it('finishes with a summary turn, provisional points, and turn/summary audit rows', async () => {
+  it('finishes with a summary turn, finalized points, and turn/summary audit rows', async () => {
     const db = tempDb('full');
     const seed = seedReadyDiscussion(db, { expertCount: 2 });
     markRunning(db, seed.discussionId);
@@ -91,11 +91,12 @@ describe('runDiscussion — full run', () => {
       .prepare('SELECT text, status, updated_seq FROM consensus_points WHERE discussion_id = ?')
       .all(seed.discussionId) as { text: string; status: string; updated_seq: number }[];
     expect(consensus).toHaveLength(3);
-    expect(consensus.every((row) => row.status === 'provisional')).toBe(true);
+    // S9 finalizes every surviving point at wrap-up (AC-1.19).
+    expect(consensus.every((row) => row.status === 'final')).toBe(true);
     expect(
       count(
         db,
-        "SELECT COUNT(*) AS count FROM divergence_points WHERE discussion_id = ? AND status = 'provisional'",
+        "SELECT COUNT(*) AS count FROM divergence_points WHERE discussion_id = ? AND status = 'final'",
         seed.discussionId,
       ),
     ).toBe(3);

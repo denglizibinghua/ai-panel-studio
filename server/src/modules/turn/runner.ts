@@ -41,6 +41,12 @@ import {
   type PersistedEvent,
 } from '../sse/publish';
 import { extractPoints, persistExtraction } from '../summary/extract';
+import { finalizePoints } from '../summary/merge';
+import {
+  EMPTY_TRANSCRIPT_SUMMARY,
+  generateSummary,
+  type SummaryResult,
+} from '../summary/summary';
 import { loadDiscussionStatus, transitionInTx } from '../discussion/status';
 
 export interface RunnerDeps {
@@ -51,6 +57,8 @@ export interface RunnerDeps {
   signal?: AbortSignal;
   /** Test hook; production uses the spec cap of 20 expert turns (AC-1.13). */
   max_expert_turns?: number;
+  /** Test hook; production uses the spec's 30s summary budget (spec §4.3). */
+  summary_timeout_ms?: number;
 }
 
 export type RunFinishReason = (typeof runFinishReasonValues)[number];
@@ -98,9 +106,6 @@ class EmptySpeechError extends Error {
     this.name = 'EmptySpeechError';
   }
 }
-
-const EMPTY_TRANSCRIPT_SUMMARY = '本场讨论未产生有效发言';
-const FALLBACK_SUMMARY = '总结生成失败，请查看完整记录';
 
 function statusNow(db: Db, discussionId: number): string | null {
   return loadDiscussionStatus(db, discussionId);
@@ -263,7 +268,26 @@ function beginTurn(
   });
 }
 
-/** `turns` + `turn.done` + speaking/idle in one transaction (a single turn unit). */
+/**
+ * `speaking` is its own committed frame *before* the model call, not part of
+ * `finishTurn`'s batch. That makes AC-1.20 observable for the whole call
+ * duration (S8 review, decision C) without adding streaming.
+ */
+function markSpeaking(
+  db: Db,
+  bus: EventBus | undefined,
+  discussionId: number,
+  guestId: number,
+  focus: string | null,
+  at: string,
+): void {
+  commitAndBroadcast(db, bus, discussionId, () => ({
+    events: [applyAgentStatusInTx(db, discussionId, guestId, 'speaking', focus, at)],
+    value: undefined,
+  }));
+}
+
+/** `turns` + `turn.done` + idle in one transaction (a single turn unit). */
 function finishTurn(
   db: Db,
   bus: EventBus | undefined,
@@ -283,7 +307,6 @@ function finishTurn(
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(discussionId, guestId, turnNo, speechType, content, at);
 
-    const speaking = applyAgentStatusInTx(db, discussionId, guestId, 'speaking', focus, at);
     const payload = serializeEventPayload('turn.done', {
       guest_id: guestId,
       turn_no: turnNo,
@@ -294,7 +317,7 @@ function finishTurn(
     const done = appendEventInTx(db, discussionId, 'turn.done', payload, at);
     const idle = applyAgentStatusInTx(db, discussionId, guestId, 'idle', null, at);
 
-    return { events: [speaking, done, idle], value: undefined };
+    return { events: [done, idle], value: undefined };
   });
 }
 
@@ -497,54 +520,6 @@ function finishAsFailed(
   }
 }
 
-interface SummaryResult {
-  text: string;
-  failed: boolean;
-}
-
-async function generateFinalSummary(
-  llm: ChatJsonClient,
-  discussionId: number,
-  state: RunnerState,
-  transcript: LedgerRecentTurn[],
-): Promise<SummaryResult> {
-  const recent = transcript
-    .map((turn) => `- ${turn.speaker_name}（${turn.speech_type}）：${turn.content}`)
-    .join('\n');
-
-  try {
-    const raw = await llm.complete({
-      messages: [
-        {
-          role: 'system',
-          content: [
-            '你是圆桌讨论的主持人，现在做收尾总结。',
-            '只输出 JSON：{"content":"..."}，不要在 JSON 之外输出任何文字。',
-            '要求：150–250 字中文纯文本；自然语言成段，不逐条罗列；',
-            '至少点出一处主要分歧；不要出现 JSON 片段、不要评价流程。',
-          ].join('\n'),
-        },
-        {
-          role: 'user',
-          content: [`议题：${state.topic}`, '全场发言：', recent].join('\n'),
-        },
-      ],
-      discussionId,
-      module: 'summary',
-      validate: (candidate) => parseContent(candidate) !== null,
-    });
-
-    const content = parseContent(raw);
-    if (content === null) {
-      return { text: FALLBACK_SUMMARY, failed: true };
-    }
-    return { text: truncateShortSpeech(content, 400), failed: false };
-  } catch (error) {
-    console.warn('[runner] summary failed:', error instanceof Error ? error.message : error);
-    return { text: FALLBACK_SUMMARY, failed: true };
-  }
-}
-
 /**
  * Writes the summary turn, `summary_text`, `state.finished` and `run.finished`
  * in one transaction: INV-9 requires the two summary copies to be byte-equal.
@@ -569,7 +544,6 @@ function finishAsFinished(
        VALUES (?, ?, ?, 'summary', ?, ?)`,
     ).run(discussionId, hostId, turnNo, summaryText, at);
 
-    const speaking = applyAgentStatusInTx(db, discussionId, hostId, 'speaking', null, at);
     const donePayload = serializeEventPayload('turn.done', {
       guest_id: hostId,
       turn_no: turnNo,
@@ -598,7 +572,7 @@ function finishAsFinished(
     });
     const finished = appendEventInTx(db, discussionId, 'run.finished', finishedPayload, at);
 
-    return { events: [speaking, done, idle, transition.event, finished], value: undefined };
+    return { events: [done, idle, transition.event, finished], value: undefined };
   });
 }
 
@@ -639,6 +613,7 @@ export async function runDiscussion(
       try {
         const at = now().toISOString();
         const turnNo = beginTurn(db, bus, discussionId, state.host.id, 'opening', null, at);
+        markSpeaking(db, bus, discussionId, state.host.id, null, now().toISOString());
         const content = await generateSpeech(
           llm,
           discussionId,
@@ -737,6 +712,14 @@ export async function runDiscussion(
           focusFor(decision.instruction),
           at,
         );
+        markSpeaking(
+          db,
+          bus,
+          discussionId,
+          guest.id,
+          focusFor(decision.instruction),
+          now().toISOString(),
+        );
         const content = await generateSpeech(
           llm,
           discussionId,
@@ -810,6 +793,7 @@ export async function runDiscussion(
             roundNo: Math.floor(afterSpeeches / 2),
             points,
             at: now().toISOString(),
+            roster,
             bus,
           });
         } catch (error) {
@@ -890,14 +874,20 @@ export async function runDiscussion(
       finishReason = 'empty_transcript';
     }
 
-    const summary = emptyTranscript
-      ? { text: EMPTY_TRANSCRIPT_SUMMARY, failed: false }
-      : await generateFinalSummary(llm, discussionId, state, transcript);
-
-    if (isAborted()) {
-      return halted();
+    // 3c. Finalize points before the closing turn: keepers become `final`,
+    // duplicates are `dropped` (one-way). Failure here must not block the run.
+    try {
+      finalizePoints(db, { discussionId, at: now().toISOString(), bus });
+    } catch (error) {
+      console.warn(
+        '[runner] finalize points skipped:',
+        error instanceof Error ? error.message : 'unknown error',
+      );
     }
 
+    // The summary turn opens before the model call so `speaking` is visible for
+    // the call duration; an empty transcript skips the call and uses AC-1.15's
+    // fixed text.
     const summaryAt = now().toISOString();
     const summaryTurnNo = beginTurn(
       db,
@@ -908,6 +898,22 @@ export async function runDiscussion(
       '收束全场',
       summaryAt,
     );
+    markSpeaking(db, bus, discussionId, state.host.id, '收束全场', now().toISOString());
+
+    let summary: SummaryResult;
+    if (emptyTranscript) {
+      summary = { text: EMPTY_TRANSCRIPT_SUMMARY, failed: false };
+    } else {
+      summary = await generateSummary(
+        llm,
+        {
+          discussion_id: discussionId,
+          topic: state.topic,
+          transcript,
+        },
+        { timeout_ms: deps.summary_timeout_ms },
+      );
+    }
 
     if (isAborted()) {
       resetAgentIdle(db, bus, discussionId, state.host.id, now().toISOString());
