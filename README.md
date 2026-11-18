@@ -83,7 +83,10 @@ E2E 额外使用 `FAKE_LLM_DELAY_MS`（默认 20ms）模拟模型耗时。
 - `pnpm e2e`：一条完整链路 + 一条失败重试链路，两遍均 `2 passed`，E2E 走独立库。
 - 真实运行（discussion 81）：270s、27 条 turn、`expert_turn_count=20`、总结 195 字；
   `llm_calls` 68 行全部 `model='deepseek-flash'`。
-- 9 张验收截图（1440/1280/390 × 三页）来自真实数据，见 `docs/WORK_REPORT.md`。
+- 9 张验收截图（1440/1280/390 × 三页）来自真实数据，见 zip 包 `screenshots/`（仓库不存二进制产物）与 `docs/WORK_REPORT.md`。
+- 每次提交都带前缀（`docs:` / `schema:` / `feat:` / `ui:` / `test:` / `e2e:`），跨 Session 是
+  **契约 → 数据 → 调度 → 界面 → 验证**，`git log --oneline` 即可复核。
+- 文档里出现的 `D:\temp\...` 是开发机临时目录，对应 zip 包的 `screenshots/` 与 `evidence/`。
 
 ## 后续改进
 
