@@ -7,17 +7,15 @@
 
 ## 0. 当前阶段（只由审查 session 更新，只改这一段；执行 session 不许动）
 
-- 当前 Session：`S8` 已完成并复审通过（状态层接线）。三页换真实数据：`web/src/api/`（client/types/手写 SSE）+
-  `web/src/stores/`（`discussion` 五份独立 state + `home`），视图不再 import mock；组件只改 prop 类型。
-  列表契约 additive（用户批准）：`guest_count` / `expert_color_ids` / `summary_text`。复测：`pnpm check` 90 测试、
-  `web build` exit 0；`D:\temp\s8-fake-llm.ts` 真跑：404 错误面板、新建→确认→开始→演播厅全通、`4/20 条专家发言`、
-  `speaking` 可见、重开确认页显示「开始讨论」、无原始 JSON、无整页滚动。复审修 3 处：404 错误面板、
-  `confirm`/`start` 拆分防死锁、动作失败不再整页替换内容。
-- 已完成：S0–S8（契约 / 协议 / 数据层 / 嘉宾生成 / 账本 / 决策 / SSE / 主循环 / 三页骨架 / 设计系统 / 状态层）。
-- 下一步：**S9 收尾与兜底**（`summary/**` 定稿 + 归并、`support_guest_ids` 回填、三种兜底、`retry-summary`、
-  SummaryPanel 三态）+ S8 复审三件事（`speaking` 根治 / AC-3.8 / `dropped` 不渲染）。视觉仍按 DESIGN v2.1。
-- **未决事项全在 `docs/OPEN_ISSUES.md`**（每轮由审查 session 更新，读完再开 S9）；最高优先级是
-  §1 `speaking`（方案 C：模型调用前发 speaking、删 600ms 驻留）、§2 AC-3.8、§3 `dropped` 过滤。
+- 当前 Session：`S9` 已完成并复审通过（收尾 / 归并 / 兜底 / retry-summary / SummaryPanel 三态 + S8 复审三件事）。
+  `pnpm check` 15 文件 / 101 测试、`web build` exit 0；真调一场 34.3s，`speaking` 可见窗口 1815ms / 1048ms
+  与对应模型调用耗时一致。复审修 3 处：retry 的 `run.finished.reason` 由 `max_turns` 改为 `retry_summary`
+  （0 条专家发言却写 max_turns 是假话，该枚举值已进 `shared` 与 `events.md`）、总结面板小屏 250 字会裁切
+  （`AppPanel` 改 `scrollable`，390 实测内部可滚）、`openapi.yaml` 补 retry-summary 契约。
+- 已完成：S0–S9（契约 / 协议 / 数据层 / 生成 / 账本 / 决策 / SSE / 主循环 / 三页 / 设计系统 / 接线 / 收尾）。
+- 下一步：**S10 E2E 闭环**（Playwright 一条完整链路，`FAKE_LLM=1`，真调超时 ≥180s）。
+  E2E 必须全程同一个浏览器 context（AC-3.8 的 sessionId 归属）；断言里包含总结面板与 `retry_summary`。
+- **未决事项全在 `docs/OPEN_ISSUES.md`**（每轮由审查 session 更新，读完再开 S10）。当前无阻塞项。
 - 每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---

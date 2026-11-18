@@ -776,6 +776,21 @@ server/test/summary/**
 - **允许改**：`e2e/**`、`playwright.config.ts`、`server/src/llm/fake.ts`、`server/src/llm/index.ts`
 - **验收**：`pnpm e2e` 一次通过；产物里有截图；二次运行也通过（可重复）
 
+**S9 之后的增量（S10 必须带上）**
+
+1. **整条链路必须用同一个浏览器 context**：`sessionId` 存在 localStorage，AC-3.8 靠它判定归属；
+   新建一个 context 再打开同一场，确认页与演播厅的写入口会全部消失（测试会以「按钮找不到」失败）。
+2. **总结不在 transcript 里**：中栏是「现场 feed + 总结面板」，transcript 已过滤 `speech_type='summary'`。
+   断言总结用 `.summary-panel__text` 的正文长度，不要靠数 transcript 条数。
+3. **retry-summary 的 E2E 要自己造失败**：让 fake provider 把所有 `module='turn'` 调成失败 →
+   跑到 `failed` + `ALL_SPEAKERS_FAILED` → 在总结面板点「重新生成总结」→ 断言 `state.finished`、
+   `summary_text` 与 summary turn 逐字相等、`run.finished.reason='retry_summary'`。
+4. **fake provider 必须支持 `module='summary'`**：否则总结走兜底文案，断言「>50 字」会失败；
+   若要覆盖超时分支，fake 需要能注入延迟（参考 S9 的 30s 预算，测试里用 20ms 注入）。
+5. **种子讨论 `session_id` 为 NULL**：对任何浏览器只读。E2E 不要拿种子 `ready` 场去点确认，
+   必须走「发起新讨论」。
+6. **小屏视觉断言用 `scrollHeight`**：总结面板 `max-height:46%` + 内部滚动，250 字在 390 下会滚不会裁。
+
 ```
 已读 AGENTS.md。本次执行 S10：端到端测试。允许改：
 e2e/**, playwright.config.ts, server/src/llm/fake.ts, server/src/llm/index.ts

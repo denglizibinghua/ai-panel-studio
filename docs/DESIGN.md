@@ -1,7 +1,7 @@
-# DESIGN.md — 视觉契约 · STAGE v2.1
+# DESIGN.md — 视觉契约 · STAGE v2.2
 
 > 品牌代号：**STAGE**（演播厅）
-> 版本：**v2.1** · 2026-11-17（v2.0 落地后按审查结果校正数值与规则，见 §12）
+> 版本：**v2.2** · 2026-11-18（S9 收尾：中栏构图 + 总结面板，见 §12）
 > 参考源：`design-md/linear.app`（只读一份；不复制品牌名、logo、专有字体）
 > 覆盖范围：方向层 + 值层，整份替换 v1。`web/src/styles/tokens.css` 同步重写。
 
@@ -198,6 +198,8 @@
 
 - 壳高：`100dvh` + `overflow: hidden`，页面永不滚动；滚动只发生在面板 body。
 - 演播厅三栏：`18rem / minmax(0,1fr) / 22rem`，列间距 `--sp-4`。
+- **中栏构图**：`现场 feed（flex:1，内部滚）` + `总结面板（固定在底部，max-height 46%，内部滚）`。
+  总结只出现一次 —— transcript 不再渲染 `speech_type='summary'` 的 turn，避免与面板重复。
 - 每个滚动容器：`overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;`
 - 页头内容高统一 **56px**，底部再压一条 1px hairline（Home / Confirm / Theater 三页同源，实测总高 57）。
 - 演播厅右栏「简报」的进度条：分子取 **`expert_turn_count`**，分母 20（AC-1.13）。
@@ -285,6 +287,9 @@
 
 ## 12. 变更记录
 
+- **2026-11-18（v2.2，S9 收尾）**：中栏改为「现场 + 总结面板」两段，总结面板 `max-height:46%` 且
+  内部滚动（390 下 250 字实测可滚，不裁切）；transcript 过滤 summary turn，保证同一段总结只出现一次。
+  其余 token / 规则不变。
 - **2026-11-17（v2.1，审查修订）**：v2.0 落地后逐项对账，改的是数值与规则、不是方向：
   ① 简报进度分子改 `expert_turn_count`（写进 §7，防 S8 用 `turns.length` 算出 27/20）；
   ② 专家色不再用于状态词（§2.5，简报图例的「发言/准备」改 `--fg-primary`）；

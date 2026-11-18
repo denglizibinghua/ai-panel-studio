@@ -869,3 +869,34 @@ Playwright 真跑一场：22 条 turn（1 开场 + 16 专家 + 4 追问 + 1 总�
 
 **教训**：S8 的两个「真 bug」都是**渲染时序**；我复审抓到的两个是**错误路径**与**多步写操作的部分失败**。
 单测与 happy-path 真跑都不会碰这些分支，下一轮验收必须至少各点一次：404、动作失败、二次重试。
+
+---
+
+### S9 复审（审查 session，2026-11-18）
+
+**独立复跑**：`pnpm check` 15 文件 / 101 测试 exit 0；`pnpm -C web build` exit 0；
+DB 仍是 5 / 25 / 31 / 127、`llm_calls=0`；逐行读了 `summary.ts` / `merge.ts` / `retry.ts` /
+`runner.ts` 的帧时序 / `extract.ts` 的回填 / store 的 dropped 过滤 / 两个 view 的 AC-3.8 隐藏。
+真调日志（`D:\temp\s9-speaking-run-output.log`）：34.3s、总结 237 字、INV-9 `true`、`turn.delta=0`、
+speaking 窗口 1815 / 1048ms 与对应 turn 调用耗时逐毫秒相同；驻留代码 grep 为空。
+
+**判定**：S9 主体合格 —— 长度硬校验（一次重试 + 越界截断/补齐 + `is_retry=1, success=0`）、
+merge 单向 final/dropped、support 精确映射、三种兜底、retry 前置 409、AC-3.8 整块不渲染，都成立。
+复审发现 3 处，已修：
+
+1. **retry 成功写 `run.finished.reason='max_turns'`**：此时 `expert_turn_count=0`，等于在说
+   「因为说满 20 条专家发言所以结束」——功能测试全绿也发现不了。新增 `retry_summary` 枚举
+   （`shared/schemas/enums.ts` + `events.md` + 测试断言），retry 用它；`empty_transcript` 分支保持原值。
+2. **总结面板 `max-height:46%` 没有内部滚动**：390 下 250 字会被裁。`AppPanel` 加 `scrollable`，
+   实测 390 下 body `scrollHeight=318 > clientHeight=270`，页面仍不滚。
+3. **`openapi.yaml` 缺 retry-summary**：执行 session 按 Ask-first 纪律没动。补 path、
+   `RetrySummaryResponse`、404/409/500 三个响应。
+
+**另记两条已知限制**（写进 `OPEN_ISSUES.md`）：
+- 种子讨论 `session_id=NULL` → 按 AC-3.8 严格比对，对任何浏览器只读；演示/E2E 必须自建场次。
+- `support_guest_ids` 是姓名子串启发式：句子提到某人即算支持，「陈砚秋并不同意」也会误算支持者。
+  MVP 接受，S11 文档如实写，不为它再调一次模型。
+
+**教训**：兜底分支的「能跑」与「数据诚实」是两件事。retry 的前置、事务、INV-9 全对，
+但 `reason` 字段在说另一种终止原因——只有把 payload 逐字段读一遍才会撞见。
+S10 的断言要覆盖 `reason`，不能只断言 `status`。
