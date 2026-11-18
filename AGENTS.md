@@ -7,13 +7,16 @@
 
 ## 0. 当前阶段（只由审查 session 更新，只改这一段；执行 session 不许动）
 
-- 当前 Session：`S11` 已完成（收口）。真调 discussion 81：270s、27 turn（1 开场 + 20 专家 + 5 追问 + 1 总结）、
-  总结 195 字且 INV-9 成立、`expert_turn_count=20`；81 号 68 行 `llm_calls` 全部 `model='deepseek-flash'`。
-  `pnpm check` 16 文件 / 104 测试、`pnpm e2e` 两遍 `2 passed`；`?state=` 与 `web/src/mock/` 已删，9 张截图重拍。
+- 当前 Session：`S11` 已完成并复审（含遗留清理）。discussion 81 的真调证据不变；复审后修了 4 项：
+  ① `support_guest_ids` 改模型结构化 supporters + 精确姓名校验（旧子串删除，旧格式降级为空）；
+  ② `retry-summary` 加单进程并发闸（第二个 409、零模型调用）；
+  ③ `pnpm check` 的一次性失败定位为 tinypool `Channel closed`，改单 fork 后 20 连跑无复现；
+  ④ E2E 加 `global-setup.ts`（代理路径就绪 + 浏览器预热，三次上限、失败即中止），不加重试。
+  `pnpm check` 17 文件 / 110 测试；`pnpm e2e` 两遍 `2 passed`。
 - 已完成：S0–S11（代码 / 契约 / 测试 / E2E / PRD / 工作说明 / README / TEST）。
 - 下一步：**只剩人的动作** —— 仓库邀请 `xule@wisquest.com`、邮件（主题含真实姓名，BOSS 昵称不同要注明）、
   发完截图回传。代码侧不要再改；任何改动必须重跑 `pnpm check` + `pnpm e2e` 两遍并更新本段。
-- 未决事项全在 `docs/OPEN_ISSUES.md`（均为已知不阻塞：support 启发式、E2E/`pnpm check` 各一次未复现的抖动等）。
+- 未决事项全在 `docs/OPEN_ISSUES.md`（无阻塞项）。
 - 每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---

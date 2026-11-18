@@ -79,7 +79,7 @@ E2E 额外使用 `FAKE_LLM_DELAY_MS`（默认 20ms）模拟模型耗时。
 ## 已完成
 
 - S0–S10 全部交付；S11 完成真调取证、删 QA 开关、文档与分层提交。
-- `pnpm check`：16 个测试文件 / 104 条测试全绿（tsc ×2 + vitest）。
+- `pnpm check`：17 个测试文件 / 110 条测试全绿（tsc ×2 + vitest）。
 - `pnpm e2e`：一条完整链路 + 一条失败重试链路，两遍均 `2 passed`，E2E 走独立库。
 - 真实运行（discussion 81）：270s、27 条 turn、`expert_turn_count=20`、总结 195 字；
   `llm_calls` 68 行全部 `model='deepseek-flash'`。
@@ -87,16 +87,16 @@ E2E 额外使用 `FAKE_LLM_DELAY_MS`（默认 20ms）模拟模型耗时。
 
 ## 后续改进
 
-- `support_guest_ids` 目前是姓名子串启发式（「X 并不同意」也会算支持），应改为模型结构化输出 + 二次校验。
-- 并发 `retry-summary` 会多烧一次模型调用（第二个事务回滚），可加分布式锁或状态预占。
+- `support_guest_ids` 已改为模型结构化输出 + 精确姓名校验；剩余风险是模型漏填时降级为空支持（不猜），下次真调抽检一次。
+- 并发 `retry-summary` 已由单进程闸挡住（第二个请求 409、零模型调用）；多进程部署需换成 DB 级锁。
 - `turn.delta` 通道已保留但未启用流式；若要「打字机」效果，需补 LLM 流式解析与取消语义。
 - 慢客户端 SSE 背压（`write()` 返回 false）暂未处理。
-- E2E 首跑偶发一次 `NETWORK_ERROR`，根因未定位；`pnpm check` 在 S10 首跑失败过一次且无日志，未复现。
+- `pnpm check` 的一次性失败已定位为 tinypool 的 IPC 竞态（`Channel closed`），现单 fork 复用进程，20 连跑无复现；E2E 首跳 `NETWORK_ERROR` 未复现，已加 globalSetup 预热 + 代理路径就绪门。
 
 ## 常用命令
 
 ```powershell
-pnpm check          # shared build + server tsc + vitest（16 files / 104 tests）
+pnpm check          # shared build + server tsc + vitest（17 files / 110 tests）
 pnpm e2e            # Playwright（seed + server + web，一遍 2 passed；验收要求连跑两遍）
 pnpm db:report      # 打印 9 张表的行数
 pnpm -C server test -- ledger   # 按文件名过滤

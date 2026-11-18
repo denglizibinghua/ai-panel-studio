@@ -6,7 +6,7 @@
 ## 1. 命令
 
 ```bash
-pnpm check                 # shared build → server tsc --noEmit → vitest（16 files / 104 tests）
+pnpm check                 # shared build → server tsc --noEmit → vitest（17 files / 110 tests）
 pnpm -C server test        # 只跑单测 / 集成
 pnpm -C server test -- summary   # 按文件名过滤
 pnpm e2e                   # Playwright：seed + 起 server + 起 web，跑完自动收摊
@@ -60,6 +60,8 @@ fake（`server/src/llm/fake.ts`）只打挂**专家**发言，主持人开场保
 
 ## 5. 环境与隔离
 
+- **vitest 单 fork**：`fileParallelism:false` + `poolOptions.forks.singleFork`。一次性 `Channel closed` 的 IPC 竞态来自 worker 回收，单 fork 复用进程后 20 连跑无复现；代价约 4s（并行约 2s）。
+- **E2E 冷启动门**：`e2e/global-setup.ts` 先验证 `/health` 与 `Vite→API /api/discussions`，再用真实浏览器加载一次首页（最多 3 次、失败即中止）。它吸收预热窗口，不是测试重试。
 - **独立 E2E 库**：`AI_PANEL_DB` 指向 `.e2e/app.db`（已 gitignore），seed 与 server 共用同一个 env。
   演示库 `server/data/app.db` 不因跑测试多出一行；两遍都可重复，也不用处理 FK 删除顺序。
 - `reuseExistingServer: false`：端口 8787 / 5173 **必须空闲**。故意不复用陈旧服务，否则你测的是上次那个进程。

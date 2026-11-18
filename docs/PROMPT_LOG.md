@@ -967,3 +967,38 @@ DB 与报告逐项对上（按 role 的 20 专家 / 5 追问、29 start / 27 don
 **教训**：S11 的「完成」有一半在仓库外。文档里每个数字都能追到 SQL，但邀请、邮件、回传没有自动化，
 只能人做。把边界写清楚，比假装全绿有用 —— 同理，报告里的现象也要能复现；复现不了就降级成「风险」，
 不写成「事实」。
+
+---
+
+### S11 复审 · 四个遗留清理（2026-11-18）
+
+**做法**：把四条已知问题分给三个子 agent，文件互不重叠；两个改代码并行，抖动调查独占端口后跑。
+
+**support_guest_ids（子 agent A）**
+姓名子串匹配会把「X 并不同意」也算成支持。改为模型结构化输出
+`{"consensus":[{"text","supporters"}],"divergence":[...]}`，只按**阵容精确姓名**映射；
+旧字符串格式仍接受但 support 为空（不猜）；未知名字丢弃、重复去重。事件/DB 结构不变，
+新增 `extract.test.ts` 5 条（含「对手句不算支持」「旧格式降级为空」）。fake 同步返回新格式。
+
+**retry-summary 并发（子 agent B）**
+加模块级 `Set<number>` 闸，同步 claim、`finally` 释放；第二个请求在调用模型前 409。
+并发测试：两个 inject 同时发，断言一个 200 / 一个 409、恰好 1 条 summary turn、1 行 summary 审计。
+验证了「claim 在第一个 await 前 + return await 让 finally 在 settle 后执行」不会泄漏。
+
+**pnpm check 一次性失败（子 agent C + 我复现）**
+C 跑了 10 轮 check + 8 轮 e2e 全绿，先加了 `fileParallelism: false` 和 E2E globalSetup。
+我随后复跑时**再次红**，这次抓到了完整栈：
+`Unhandled Rejection: Channel closed` → `tinypool ProcessWorker.send`（worker 回收后 IPC 已关）。
+说明触发点是**worker 回收**，不是并发负载；`fileParallelism:false` 不够。
+改为 `pool:'forks'` + `singleFork:true`（整个 run 一个子进程），单测 20 连跑 0 失败（约 4.9s/轮），
+`pnpm check` 2 连绿、`pnpm e2e` 2 连绿（2 passed / 7.8s）。不加测试重试。
+
+**E2E NETWORK_ERROR（子 agent C）**
+8+3 次冷缓存重跑未复现。加了 `e2e/global-setup.ts` 两道门：`/health` + `Vite→API /api/discussions`
+就绪，再用真实浏览器加载一次首页（最多 3 次、失败即中止）。这吸收冷启动/预热窗口，不是测试重试。
+根因仍未证明，`OPEN_ISSUES` 保留为「未复现 + 已加诊断门」。
+
+**复核**：`pnpm check` 17 文件 / 110 测试、`pnpm e2e` 两遍各 `2 passed`；主库仍是 7 场 / 69 行真调行，未被测试写入。
+
+**教训**：子 agent 报「加固完成」不等于修好 —— 它没复现，我复现了；**没有复现就没有根因**。
+另外，这次栈是 `Channel closed` 而不是测试断言，提醒自己：`ELIFECYCLE Test failed` 先看是不是 runner 层的问题。
