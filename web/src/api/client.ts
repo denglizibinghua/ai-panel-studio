@@ -5,6 +5,7 @@ import type {
   DiscussionDetail,
   DiscussionSummary,
   GenerateGuestsResponse,
+  RetrySummaryResponse,
   StartDiscussionResponse,
 } from './types';
 
@@ -24,6 +25,51 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 /** `/health` lives outside `/api` (Vite proxies both — see vite.config.ts). */
 const HEALTH_PATH = '/health';
+
+/**
+ * AC-3.8: the anonymous creator id. Persisted in localStorage (UUID) and sent
+ * on create; the frontend hides write entries when a discussion's `session_id`
+ * does not match. The backend does not authorise on it (v1 has no auth).
+ */
+const SESSION_KEY = 'ai-panel-session-id';
+let cachedSessionId: string | null = null;
+
+function randomUuid(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  cryptoApi.getRandomValues(bytes);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function getSessionId(): string {
+  if (cachedSessionId !== null) {
+    return cachedSessionId;
+  }
+  try {
+    const existing = window.localStorage.getItem(SESSION_KEY);
+    if (existing !== null && existing.length > 0 && existing.length <= 64) {
+      cachedSessionId = existing;
+      return existing;
+    }
+  } catch {
+    // Storage can be unavailable (private mode / blocked): fall through and
+    // keep a per-tab id so this page session still owns what it creates.
+  }
+  const created = randomUuid();
+  cachedSessionId = created;
+  try {
+    window.localStorage.setItem(SESSION_KEY, created);
+  } catch {
+    // Ignore: the in-memory id above is still usable for this tab.
+  }
+  return created;
+}
 
 export class ApiError extends Error {
   readonly status: number;
@@ -118,9 +164,10 @@ export function createDiscussion(input: {
   expert_count: number;
   session_id?: string;
 }): Promise<DiscussionDetail> {
+  const sessionId = input.session_id ?? getSessionId();
   return request<DiscussionDetail>(`${API_BASE}/discussions`, {
     method: 'POST',
-    body: input,
+    body: sessionId.length > 0 ? { ...input, session_id: sessionId } : input,
   });
 }
 
@@ -148,6 +195,13 @@ export function startDiscussion(id: number): Promise<StartDiscussionResponse> {
 
 export function cancelDiscussion(id: number): Promise<CancelDiscussionResponse> {
   return request<CancelDiscussionResponse>(`${API_BASE}/discussions/${id}/cancel`, {
+    method: 'POST',
+  });
+}
+
+/** S9: `failed (ALL_SPEAKERS_FAILED) → finished`; 409 for any other status. */
+export function retrySummary(id: number): Promise<RetrySummaryResponse> {
+  return request<RetrySummaryResponse>(`${API_BASE}/discussions/${id}/retry-summary`, {
     method: 'POST',
   });
 }

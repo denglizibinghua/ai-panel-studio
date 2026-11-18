@@ -7,6 +7,7 @@ import AppPanel from '../components/common/AppPanel.vue';
 import ConsensusBoard from '../components/theater/ConsensusBoard.vue';
 import HostBar from '../components/theater/HostBar.vue';
 import RosterPanel from '../components/theater/RosterPanel.vue';
+import SummaryPanel from '../components/theater/SummaryPanel.vue';
 import TranscriptFeed from '../components/theater/TranscriptFeed.vue';
 import { useDiscussionStore } from '../stores/discussion';
 
@@ -55,14 +56,12 @@ const loadFailure = computed(
   () => store.loadError !== null && store.detail === null,
 );
 
-/** 失败面板：打不开 / state.failed / run.failed / QA 覆盖。 */
-const failedView = computed(
-  () =>
-    qaState.value === 'failed' ||
-    loadFailure.value ||
-    store.status === 'failed' ||
-    store.errorCode !== null,
-);
+/**
+ * 只有「打不开」和 QA 的 `?state=failed` 才整块换掉现场。
+ * 一场跑失败（`status='failed'`）要保留 transcript，并交给底部 SummaryPanel
+ * 显示失败态与重试按钮（S9；ALL_SPEAKERS_FAILED 才能重试）。
+ */
+const stageFailure = computed(() => qaState.value === 'failed' || loadFailure.value);
 
 const failureTitle = computed(() =>
   loadFailure.value ? '无法打开这场讨论' : '本场讨论失败',
@@ -71,9 +70,20 @@ const failureHint = computed(() =>
   loadFailure.value ? (store.loadError ?? '讨论不存在') : '可以重新加入本场讨论',
 );
 
-const displayedTurns = computed(() => (qaState.value === 'empty' ? [] : store.turns));
+const displayedTurns = computed(() =>
+  qaState.value === 'empty'
+    ? []
+    : store.turns.filter((turn) => turn.speech_type !== 'summary'),
+);
 const consensusPoints = computed(() => (qaState.value === 'empty' ? [] : store.consensus));
 const divergencePoints = computed(() => (qaState.value === 'empty' ? [] : store.divergence));
+
+/** 收尾总结只在终态面板里出现一次；transcript 已过滤 summary 行。 */
+const showSummary = computed(
+  () =>
+    qaState.value !== 'empty' &&
+    (store.status === 'finished' || store.status === 'failed'),
+);
 
 /**
  * store 的 `expertTurnCount` 只数专家 `turn.done`（不含主持开场 / 追问 / 总结），
@@ -128,6 +138,11 @@ function retry(): void {
   if (Number.isFinite(numericId.value)) {
     void store.open(numericId.value);
   }
+}
+
+/** SummaryPanel 的失败重试：走后端 retry-summary（仅 ALL_SPEAKERS_FAILED）。 */
+function retrySummary(): void {
+  void store.retrySummary();
 }
 
 onMounted(() => {
@@ -206,16 +221,8 @@ onBeforeUnmount(() => {
           :status-map="store.agentStatusMap"
         />
 
-        <TranscriptFeed
-          v-if="!failedView"
-          ref="feedRef"
-          class="studio__stage"
-          :class="{ 'studio__stage--active': activeTab === 'stage' }"
-          :turns="displayedTurns"
-          :guests="store.guests"
-        />
         <AppPanel
-          v-else
+          v-if="stageFailure"
           class="studio__stage"
           :class="{ 'studio__stage--active': activeTab === 'stage' }"
           title="现场"
@@ -229,6 +236,28 @@ onBeforeUnmount(() => {
             <AppButton variant="secondary" size="sm" @click="retry">重试</AppButton>
           </AppEmpty>
         </AppPanel>
+        <div
+          v-else
+          class="studio__stage"
+          :class="{ 'studio__stage--active': activeTab === 'stage' }"
+        >
+          <TranscriptFeed
+            ref="feedRef"
+            class="studio__feed"
+            :turns="displayedTurns"
+            :guests="store.guests"
+          />
+          <SummaryPanel
+            v-if="showSummary"
+            class="studio__summary"
+            :state="store.summaryState"
+            :text="store.summaryText"
+            :can-retry="store.canRetrySummary"
+            :retrying="store.retryingSummary"
+            :error="store.retrySummaryError"
+            @retry="retrySummary"
+          />
+        </div>
 
         <div
           class="studio__insights"
@@ -264,6 +293,7 @@ onBeforeUnmount(() => {
             {{ store.cancelError }}
           </p>
           <AppButton
+            v-if="store.canWrite"
             variant="danger"
             size="sm"
             :disabled="!canCancel"
@@ -335,6 +365,21 @@ onBeforeUnmount(() => {
 
 .studio__stage {
   grid-area: stage;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-height: 0;
+}
+
+/* 中栏内部：transcript 占满剩余高度，结束总结固定在底部（不挤压现场）。 */
+.studio__feed {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.studio__summary {
+  flex: none;
+  max-height: 46%;
 }
 
 /* 右栏外壳：宽屏是普通栅格列；901–1200 变 fixed 抽屉 */

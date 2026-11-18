@@ -77,3 +77,11 @@ export interface CancelDiscussionResponse {
   finished_at: string;
   error_code: null;
 }
+
+/** `POST /api/discussions/{id}/retry-summary` (S9, failed → finished). */
+export interface RetrySummaryResponse {
+  id: number;
+  status: 'finished';
+  summary_text: string;
+  finished_at: string;
+}

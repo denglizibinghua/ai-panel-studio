@@ -6,6 +6,7 @@ import AppCard from '../components/common/AppCard.vue';
 import AppEmpty from '../components/common/AppEmpty.vue';
 import GuestCard from '../components/guest/GuestCard.vue';
 import PageShell from '../components/layout/PageShell.vue';
+import { getSessionId } from '../api/client';
 import { useHomeStore } from '../stores/home';
 
 /**
@@ -43,6 +44,15 @@ const pageState = computed<'ready' | 'loading' | 'error'>(() => {
 });
 
 const selectedId = ref<number | null>(null);
+
+/**
+ * AC-3.8: hide the three write entries on this page (「生成」/「确认」/「开始」)
+ * for a visitor whose local sessionId differs from the discussion owner's.
+ * `v-if` (not `disabled` / `hidden`) so no clickable button is rendered at all.
+ */
+const canWrite = computed(
+  () => home.detail !== null && home.detail.session_id === getSessionId(),
+);
 
 /**
  * 阵容是否已锁定（ready / running），以及 confirm 刚成功但 start 还没成功。
@@ -161,7 +171,7 @@ onMounted(() => {
       </div>
     </main>
 
-    <footer class="confirm__footer">
+    <footer v-if="canWrite" class="confirm__footer">
       <p v-if="home.error !== null && pageState === 'ready'" class="confirm__error-line" role="alert">
         {{ home.error }}
       </p>

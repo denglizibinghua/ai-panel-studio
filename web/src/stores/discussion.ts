@@ -1,7 +1,13 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import type { AgentState, ConsensusPoint, DiscussionStatus, DivergencePoint, Turn } from '@ai-panel/shared';
-import { apiErrorMessage, cancelDiscussion, getDiscussion } from '../api/client';
+import {
+  apiErrorMessage,
+  cancelDiscussion,
+  getDiscussion,
+  getSessionId,
+  retrySummary as requestRetrySummary,
+} from '../api/client';
 import { subscribeDiscussionEvents, type SseFrame } from '../api/events';
 import type { AgentStatusView, DiscussionDetail, DiscussionErrorCode } from '../api/types';
 
@@ -172,22 +178,13 @@ export const useDiscussionStore = defineStore('discussion', () => {
   const loadError = ref<string | null>(null);
   /** 写操作（取消）失败：就地提示，不能把已加载的演播厅整页换成错误态。 */
   const cancelError = ref<string | null>(null);
+  /** `run.finished.summary_failed`：总结调用超时 / 失败（AC-1.16）。 */
+  const summaryFailed = ref(false);
+  const retryingSummary = ref(false);
+  const retrySummaryError = ref<string | null>(null);
 
   let controller: AbortController | null = null;
   let openToken = 0;
-
-  /**
-   * `speaking` 的最小可见时长。
-   *
-   * 服务端把 `speaking` / `turn.done` / `idle` 写在**同一个事务**里
-   * （`runner.ts` 的 `finishTurn`），三帧同一批到达，Vue 只渲染一次 ——
-   * 于是契约里的 speaking 在浏览器里一帧都画不出来（AC-1.20 不可观测）。
-   * 这里给 speaking→idle 一个最小驻留：状态确实发生过，只是把它拉到
-   * 可感知；任何更新的 `agent.status` 帧都会取消这个延迟，不会覆盖新状态。
-   */
-  const SPEAKING_DWELL_MS = 600;
-  const speakingStartedAt = new Map<number, number>();
-  const pendingIdleTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   const guests = computed(() => detail.value?.guests ?? []);
 
@@ -212,6 +209,41 @@ export const useDiscussionStore = defineStore('discussion', () => {
 
   const canCancel = computed(() => CANCELLABLE_STATUSES.includes(status.value));
 
+  /** AC-3.8: only the client that created the discussion may write. */
+  const canWrite = computed(
+    () => detail.value !== null && detail.value.session_id === getSessionId(),
+  );
+
+  /** The summary turn is authoritative (INV-9); detail is the list-fast-path copy. */
+  const summaryText = computed<string | null>(() => {
+    for (let index = turns.value.length - 1; index >= 0; index -= 1) {
+      const turn = turns.value[index];
+      if (turn?.speech_type === 'summary') {
+        return turn.content;
+      }
+    }
+    return detail.value?.summary_text ?? null;
+  });
+
+  type SummaryState = 'loading' | 'success' | 'failed';
+
+  const summaryState = computed<SummaryState>(() => {
+    if (status.value === 'failed' || summaryFailed.value) {
+      return 'failed';
+    }
+    if (status.value === 'finished' && summaryText.value !== null) {
+      return 'success';
+    }
+    return 'loading';
+  });
+
+  const canRetrySummary = computed(
+    () =>
+      canWrite.value &&
+      status.value === 'failed' &&
+      errorCode.value === 'ALL_SPEAKERS_FAILED',
+  );
+
   function reset(): void {
     status.value = 'draft';
     agentStatusMap.value = {};
@@ -226,23 +258,9 @@ export const useDiscussionStore = defineStore('discussion', () => {
     errorCode.value = null;
     loadError.value = null;
     cancelError.value = null;
-    clearAgentTimers();
-  }
-
-  function clearAgentTimers(): void {
-    for (const timer of pendingIdleTimers.values()) {
-      clearTimeout(timer);
-    }
-    pendingIdleTimers.clear();
-    speakingStartedAt.clear();
-  }
-
-  function clearPendingIdle(guestId: number): void {
-    const timer = pendingIdleTimers.get(guestId);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      pendingIdleTimers.delete(guestId);
-    }
+    summaryFailed.value = false;
+    retryingSummary.value = false;
+    retrySummaryError.value = null;
   }
 
   function commitAgentStatus(
@@ -280,6 +298,16 @@ export const useDiscussionStore = defineStore('discussion', () => {
     errorCode.value = payload.error_code;
   }
 
+  function applyRunFinished(data: string): void {
+    const payload = parsePayload(data);
+    if (payload === null) {
+      return;
+    }
+    if (typeof payload.summary_failed === 'boolean') {
+      summaryFailed.value = payload.summary_failed;
+    }
+  }
+
   function applyAgentStatus(data: string, frameId: number | null): void {
     if (frameId === null) {
       return;
@@ -294,46 +322,9 @@ export const useDiscussionStore = defineStore('discussion', () => {
     }
     const focus = payload.focus === null ? null : asString(payload.focus);
 
-    // 任何一帧新的状态都作废上一条 delayed idle，避免旧定时器回写。
-    clearPendingIdle(guestId);
-
-    if (payload.state === 'speaking') {
-      // 同一时刻只能有一位「发言中」：新发言人出现时，把上一位的 dwell 立刻收口。
-      for (const [otherId, view] of Object.entries(agentStatusMap.value)) {
-        const id = Number(otherId);
-        if (id === guestId || view.state !== 'speaking') {
-          continue;
-        }
-        clearPendingIdle(id);
-        speakingStartedAt.delete(id);
-        agentStatusMap.value = {
-          ...agentStatusMap.value,
-          [id]: { state: 'idle', focus: null, updated_seq: view.updated_seq },
-        };
-      }
-      speakingStartedAt.set(guestId, Date.now());
-      commitAgentStatus(guestId, 'speaking', focus, frameId);
-      return;
-    }
-
-    if (payload.state === 'idle') {
-      const startedAt = speakingStartedAt.get(guestId);
-      const elapsed =
-        startedAt === undefined ? Number.POSITIVE_INFINITY : Date.now() - startedAt;
-      if (elapsed < SPEAKING_DWELL_MS) {
-        const delay = SPEAKING_DWELL_MS - elapsed;
-        pendingIdleTimers.set(
-          guestId,
-          setTimeout(() => {
-            pendingIdleTimers.delete(guestId);
-            commitAgentStatus(guestId, 'idle', focus, frameId);
-          }, delay),
-        );
-        return;
-      }
-      speakingStartedAt.delete(guestId);
-    }
-
+    // S8 review decision C: the server now commits `speaking` before the model
+    // call and `idle` after the turn, so the UI applies frames verbatim — no
+    // dwell timer, no "only one speaker" compensation.
     commitAgentStatus(guestId, payload.state, focus, frameId);
   }
 
@@ -434,6 +425,18 @@ export const useDiscussionStore = defineStore('discussion', () => {
     const receivedAt = new Date().toISOString();
     const owner = detail.value?.id ?? discussionId.value ?? 0;
 
+    // `dropped` is filtered here — the single place (OPEN_ISSUES §3). The board
+    // renders whatever the store holds, so it must never implement a second
+    // filter; a dropped point is removed even if it had been shown provisionally.
+    if (point.status === 'dropped') {
+      if (target === 'consensus') {
+        consensus.value = consensus.value.filter((item) => item.id !== point.point_id);
+      } else {
+        divergence.value = divergence.value.filter((item) => item.id !== point.point_id);
+      }
+      return;
+    }
+
     if (target === 'consensus') {
       const existing = consensus.value.find((item) => item.id === point.point_id);
       if (existing !== undefined && existing.updated_seq >= frameId) {
@@ -520,7 +523,11 @@ export const useDiscussionStore = defineStore('discussion', () => {
       applyRunFailed(frame.data);
       return;
     }
-    // run.started / run.finished / run.cancelled 只用于运行提示：
+    if (frame.type === 'run.finished') {
+      applyRunFinished(frame.data);
+      return;
+    }
+    // run.started / run.cancelled 只用于运行提示：
     // 状态来自 state.*，取消不是失败（不得写 errorCode，AC-1.24）。
   }
 
@@ -600,7 +607,6 @@ export const useDiscussionStore = defineStore('discussion', () => {
     controller?.abort();
     controller = null;
     connecting.value = false;
-    clearAgentTimers();
   }
 
   async function cancel(): Promise<void> {
@@ -613,6 +619,32 @@ export const useDiscussionStore = defineStore('discussion', () => {
       await cancelDiscussion(id);
     } catch (error) {
       cancelError.value = messageOf(error);
+    }
+  }
+
+  /**
+   * S9 retry endpoint: `failed (ALL_SPEAKERS_FAILED) → finished`. SSE keeps the
+   * stream open, so the new `turn.done(summary)` arrives there; the extra
+   * detail fetch makes status/error_code correct even if the stream had dropped.
+   */
+  async function retrySummary(): Promise<void> {
+    const id = discussionId.value;
+    if (id === null || retryingSummary.value) {
+      return;
+    }
+    retryingSummary.value = true;
+    retrySummaryError.value = null;
+    try {
+      await requestRetrySummary(id);
+      const refreshed = await getDiscussion(id);
+      detail.value = refreshed;
+      status.value = refreshed.status;
+      errorCode.value = refreshed.error_code;
+      summaryFailed.value = false;
+    } catch (error) {
+      retrySummaryError.value = messageOf(error);
+    } finally {
+      retryingSummary.value = false;
     }
   }
 
@@ -632,12 +664,20 @@ export const useDiscussionStore = defineStore('discussion', () => {
     errorCode,
     loadError,
     cancelError,
+    summaryFailed,
+    retryingSummary,
+    retrySummaryError,
     guests,
     expertTurnCount,
     statusLabel,
     canCancel,
+    canWrite,
+    summaryText,
+    summaryState,
+    canRetrySummary,
     open,
     close,
     cancel,
+    retrySummary,
   };
 });
