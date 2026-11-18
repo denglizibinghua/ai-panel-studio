@@ -33,6 +33,8 @@
 Session 已经提交的文件。中途补了一个 S6.5 —— 审查时发现「讨论 CRUD + 主循环」没有任何 Session 认领，
 这是拆解本身的漏洞，不是实现问题。
 
+**工具与协作**：每个 Session 在一个独立的会话式 Vibe Coding agent 里执行，会话之间不共享记忆，AGENTS.md 是唯一的跨会话契约；执行 session 只交代码与验收输出，审查 session 负责独立复跑、复现缺陷、修契约与文档。模型统一走 DeepSeek 的 OpenAI 兼容接口，llm_calls.model 存的是响应返回的真实模型名（本轮为 deepseek-flash，Pro 档当前由 flash 承接），文档里没有写无法自证的型号。
+
 ## 3. 三个真实卡点（全部摘自 `PROMPT_LOG`）
 
 **① 审计字段写死，33 条测试全绿但审计表全错（S3）**

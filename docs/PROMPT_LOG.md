@@ -1,4 +1,4 @@
-﻿# 核心 Prompt 记录
+# 核心 Prompt 记录
 
 > 交付物之一，必须 ≥5 段，且覆盖 SDD / DDD / TDD / E2E 四个阶段。
 > **规则：每完成一个 Session 就追加一条，不要事后补写。** 面试会追问细节。
@@ -32,8 +32,10 @@
 - [x] S7 · 演播厅布局 — 阶段：DDD
 - [x] S7.5 · 设计系统重写 — 阶段：DDD
 - [x] S8 · 状态层接线 — 阶段：DDD
-- [ ] S9 · 收尾与兜底 — 阶段：TDD
-- [ ] S10 · E2E 闭环 — 阶段：E2E
+- [x] S9 · 收尾与兜底 — 阶段：TDD
+- [x] S10 · E2E 闭环 — 阶段：E2E
+- [x] S11 · 收口与真调取证 — 阶段：收口（文档 + 证据）
+- [x] S11.5 · 四个遗留清理 — 阶段：TDD 复核
 
 ---
 
@@ -584,7 +586,7 @@ tsc --noEmit ×2 ✓ → 10 files / 71 tests passed（S5 结束时 52 条）
 
 ---
 
-## S6.5 · 讨论生命周期 + 主循环（2026-11-17）
+## S6.5 · 讨论生命周期 + 主循环（2026-11-17） — 阶段：TDD
 
 **提示词（摘要）**：按 `docs/SESSION_MAP.md` S6.5 执行，允许改 `modules/discussion/**`、`turn/runner.ts`、`summary/extract.ts`、`host/interject.ts`、`test/discussion/**`、`test/runner/**`。A 五个 REST 端点；B 开场→循环→收尾；C 每 2 条提炼；D 每 4 条主持人追问。验收：`pnpm -C server test -- runner` 全绿 + 真实 HTTP 跑完一整场。
 
@@ -739,7 +741,7 @@ JS 还以为自己是宽屏，于是 390px 下 **roster + transcript + insights 
 
 
 
-### S7.5 · 设计系统重写（2026-11-17）
+### S7.5 · 设计系统重写（2026-11-17） — 阶段：DDD
 
 **核心 Prompt**（主体实现在独立 session；本 session 只做审查、契约校正与单点修复）：
 1. 选型：「读 `awesome-design-md/index.md`，在 linear.app / runwayml / theverge 里定一个，只 Read 那一份 DESIGN.md；不许把参考文件复制进项目。」
@@ -835,7 +837,7 @@ Playwright 真跑一场：22 条 turn（1 开场 + 16 专家 + 4 追问 + 1 总�
 
 ---
 
-### S8 复审（审查 session，2026-11-18）
+### S8 复审（审查 session，2026-11-18） — 阶段：DDD 复核
 
 **独立复跑**：`pnpm check` 12 文件 / 90 测试、exit 0；`pnpm -C web build` exit 0；四条 grep 全空
 （`mock/` / `EventSource` / `as any|ts-ignore` / 组件内 `#hex`）；DB 回到 5 / 25 / 31 / 127、`llm_calls=0`。
@@ -872,7 +874,7 @@ Playwright 真跑一场：22 条 turn（1 开场 + 16 专家 + 4 追问 + 1 总�
 
 ---
 
-### S9 复审（审查 session，2026-11-18）
+### S9 复审（审查 session，2026-11-18） — 阶段：TDD 复核
 
 **独立复跑**：`pnpm check` 15 文件 / 101 测试 exit 0；`pnpm -C web build` exit 0；
 DB 仍是 5 / 25 / 31 / 127、`llm_calls=0`；逐行读了 `summary.ts` / `merge.ts` / `retry.ts` /
@@ -903,7 +905,7 @@ S10 的断言要覆盖 `reason`，不能只断言 `status`。
 
 ---
 
-### S10 · E2E 闭环（2026-11-18）
+### S10 · E2E 闭环（2026-11-18） — 阶段：E2E
 
 **核心 Prompt**（父段 + 我给执行 session 的增量）：一条 `full-flow` 走完首页→新建→确认→演播厅→总结，
 同 context（AC-3.8 的 sessionId）；`FAKE_LLM=1`；总结从 `.summary-panel__text` 断言；retry 场景自己造
@@ -936,7 +938,7 @@ S10 的断言要覆盖 `reason`，不能只断言 `status`。
 
 ---
 
-### S11 · 收口与真调取证（2026-11-18）
+### S11 · 收口与真调取证（2026-11-18） — 阶段：收口（文档 + 证据）
 
 **顺序**：取证 → 删 QA 开关 + 重拍 → 文档 → 清理提交。先跑数字、后写报告，避免"先结论后补证据"。
 
@@ -970,7 +972,7 @@ DB 与报告逐项对上（按 role 的 20 专家 / 5 追问、29 start / 27 don
 
 ---
 
-### S11 复审 · 四个遗留清理（2026-11-18）
+### S11 复审 · 四个遗留清理（2026-11-18） — 阶段：TDD 复核
 
 **做法**：把四条已知问题分给三个子 agent，文件互不重叠；两个改代码并行，抖动调查独占端口后跑。
 
