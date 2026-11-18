@@ -175,6 +175,18 @@ body {
   }
 }
 
+/* 超宽屏（DESIGN §11）：页框 1440 → 1760，左右栏各 +2rem。
+ * 中栏面板宽度由 TheaterView 单独封顶，所以正文行长不变。 */
+@media (min-width: 1600px) {
+  :root {
+    --page-max: 110rem; /* 1760 */
+    --roster-w: 20rem;
+    --insights-w: 24rem;
+    /* 阵容确认页的卡片栅格跟着页框走，否则右侧空出 400+ */
+    --read-max: 110rem;
+  }
+}
+
 /* 尊重系统偏好：所有循环动画（呼吸、光标）必须停 */
 @media (prefers-reduced-motion: reduce) {
   *,

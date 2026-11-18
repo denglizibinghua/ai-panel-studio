@@ -508,4 +508,15 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 }
+
+/* ── ≥1600：页框放宽到 1760 后，中栏两段面板封顶 48rem 居中 ──
+ * 栅格列变宽只换来留白，不让 transcript 的行长跟着涨（DESIGN §11）。 */
+@media (min-width: 1600px) {
+  .studio__feed,
+  .studio__summary {
+    width: 100%;
+    max-width: 48rem;
+    margin-inline: auto;
+  }
+}
 </style>
