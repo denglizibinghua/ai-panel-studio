@@ -380,6 +380,53 @@ paths:
                 code: INVALID_STATE_TRANSITION
                 message: 该状态不可取消
 
+  /api/discussions/{id}/retry-summary:
+    post:
+      operationId: retrySummary
+      tags: [run]
+      summary: 重试结束总结（failed → finished）
+      description: |
+        唯一允许从 `failed` 迁出的入口（spec §4.1）。仅当 `status='failed'` 且
+        `error_code='ALL_SPEAKERS_FAILED'` 时允许。成功后在同一事务内写：
+        一条 `turn.done(speech_type='summary')`、`discussions.summary_text`（与 turn 内容
+        逐字相等，INV-9）、`state.finished` 与 `run.finished(reason='retry_summary')`，
+        并清空 `error_code`。请求体为空。
+      parameters:
+        - $ref: '#/components/parameters/DiscussionId'
+      responses:
+        '200':
+          description: 已补完总结并置 `finished`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrySummaryResponse'
+        '404':
+          description: 讨论 `id` 不存在 → `DISCUSSION_NOT_FOUND`。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: DISCUSSION_NOT_FOUND
+                message: 讨论不存在
+        '409':
+          description: |
+            `INVALID_STATE_TRANSITION`：当前不是 `failed`、`error_code` 不是
+            `ALL_SPEAKERS_FAILED`，或主持人阵容未锁定。状态不变。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INVALID_STATE_TRANSITION
+                message: 只有全部发言失败的讨论可以重试总结
+        '500':
+          description: '`LLM_NOT_CONFIGURED`：服务端未配置模型 Key。'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/discussions/{id}/events:
     get:
       operationId: subscribeDiscussionEvents
@@ -839,6 +886,27 @@ components:
           description: |
             恒为 `null` —— 取消不是错误（AC-1.24），与 `failed` 严格区分；
             不存在 `run.failed` + `error_code:null` 这种伪造取消的形态（见 `events.md` §6.4）。
+
+    RetrySummaryResponse:
+      type: object
+      required: [id, status, summary_text, finished_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum: [finished]
+        summary_text:
+          type: string
+          minLength: 1
+          maxLength: 400
+          description: 与新建 `turn.done(speech_type='summary').content` 逐字相等（INV-9）。
+        finished_at:
+          type: string
+          format: date-time
 
     HealthStatus:
       type: object

@@ -131,6 +131,8 @@ export const runFinishReasonValues = [
   'request_satisfied',
   'stalled',
   'empty_transcript',
+  /** S9: `POST /retry-summary` turned a failed run into finished. */
+  'retry_summary',
 ] as const;
 export const runFinishReasonSchema = z.enum(runFinishReasonValues);
 

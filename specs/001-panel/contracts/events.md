@@ -205,13 +205,14 @@ data: {"status":"ready","previous_status":"draft","updated_at":"2026-11-17T08:30
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `finished_at` | string(ISO-8601) | 进入 `finished` 的时间 |
-| `reason` | enum | `max_turns` \| `request_satisfied` \| `stalled` \| `empty_transcript` |
+| `reason` | enum | `max_turns` \| `request_satisfied` \| `stalled` \| `empty_transcript` \| `retry_summary` |
 | `expert_turn_count` | integer ≥ 0 | 本场专家发言条数（不含主持） |
 | `summary_failed` | boolean | 收尾总结超时/失败（spec §4.3）→ `true`，此时 `summary` turn 内容为固定兜底文案 |
 
 `reason` 与触发的对应：`stalled` = 停摆计数达 3（AC-1.12）；`max_turns` = 专家发言达 20；
 `request_satisfied` = 账本判定 `is_request_satisfied=true`（AC-1.13）；`empty_transcript` =
-`turns` 为 0（AC-1.15）。
+`turns` 为 0（AC-1.15）；`retry_summary` = `POST /retry-summary` 把 `failed`（仅
+`ALL_SPEAKERS_FAILED`）补成 `finished`（S9）。
 覆盖 AC：**AC-1.12 / AC-1.13 / AC-1.14 / AC-1.15**（总结正文本身由 `turn.done`
 `speech_type='summary'` 承载）。
 

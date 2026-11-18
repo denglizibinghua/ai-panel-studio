@@ -120,6 +120,7 @@ draft        ──确认(confirm)→ ready（guests.locked=1 + agent_status 建
 ready        ──开始(start)→ running
 running      ──收尾完成→ finished
 running      ──全部发言失败→ failed
+failed       ──重试总结(retry-summary)→ finished（仅 error_code='ALL_SPEAKERS_FAILED'；成功后清空 error_code）
 draft|generating|ready|running ──取消(cancel)→ cancelled
 ```
 
