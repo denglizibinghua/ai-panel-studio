@@ -9,13 +9,8 @@
 
 ## S11 开工前必须处理
 
-1. **主库没有真调证据**：`llm_calls` 现在是 0。此前那 20 条 `deepseek-flash` 是 fake 失败调用
-   （transport 抛错拿不到响应 model，client 回落到默认模型名），随 E2E 场次一起删了，**不可恢复、不可当证据**。
-   用户已决定 S11 跑。做法：真 Key 跑一场（1–3 分钟）→
-   `SELECT module, model, success, COUNT(*) FROM llm_calls GROUP BY 1,2,3` 必须看到
-   `deepseek-flash` 且 `success=1` 的行；`WORK_REPORT` 只引用这一次的库，不引用 `.e2e/app.db`。
-2. **`web/src/mock/mock.ts` 已无引用**（S10 用真实 API + fake provider，不再需要假数据源）。
-   S11 二选一：删掉，或在 README 说明保留理由。别留成"看起来在用"的死文件。
+（已清空。S11 已用真 Key 跑完 discussion 81 并取证：该场次 68 行 `llm_calls` 全部
+`model='deepseek-flash'`；`web/src/mock/mock.ts` 已删除。证据见 `docs/WORK_REPORT.md` §4。）
 
 ## 已知但不阻塞
 
@@ -25,22 +20,24 @@
    MVP 接受，S11 文档如实写，不为它再调模型。
 5. **并发 retry-summary**：两个请求同时进来会各打一次模型调用，第二个在事务里撞状态迁移回滚
    （数据不会坏，只多烧一次调用）。低优先，不修。
-6. `?state=` QA 开关仍在四个视图里（已接真实 store 状态）→ S11 删并重拍截图。
+6. `?state=` QA 开关已删除（S11），三页不再有任何 query 覆盖入口；9 张截图已重拍。
 7. `guests/generate` 不发 `state.generating` / `state.draft` → `events.md` 已写明「当前不发送」，保持。
 8. 单条发言失败会让 `turns.turn_no` 留空洞（正常路径不触发）；`ledger.turn_no` 已独立单调。
 9. `expert_color_ids` 依赖 SQLite 聚合 `ORDER BY`（≥3.44）→ 换库前要重测。
-10. 浏览器控制台一条 `favicon.ico` 404 → S11 顺手补或忽略。
+10. favicon 404 已修（`web/index.html` 内联 SVG data URI），无新增静态文件。
 11. `streaming` / `startedTurns` 已按契约维护，但服务端不发 delta、UI 也不渲染 →
-    保留给后续流式；若最终不做，S11 前删掉，避免死状态。
+    决定**保留**给后续流式（README「后续改进」已写明），不是死状态，删掉反而要重写契约。
 12. 总结面板在小屏（≤600）靠内部滚动（390 下 250 字 sh 318 > ch 270）；断言用 `scrollHeight`，
     不要用面板高度判断。
 13. `.e2e/app.db` 会随每次 E2E 累积场次（seed 只清 `sample=1`）。目录已 gitignore，不影响交付库；
     想清零就删 `.e2e/`。
 14. **`pnpm check` 在 S10 首跑失败过一次**（`ELIFECYCLE Test failed`，未保存完整输出），
     随后单测 5 连绿 + 全链路 2 次绿，未复现，也没有根因。再犯时先存完整日志再判断，别先怪测试。
+    （S11 复跑 16 文件 / 104 测试全绿，仍未复现。）
 15. **E2E 首跑偶发 `NETWORK_ERROR`**（浏览器→Vite 一跳，7 次里 1 次；DEBUG 下 server 未退出）。
     已加 `/health` 预检让失败直接说「后端未就绪」，但根因未定位。S11 不再追，除非复发。
-16. **E2E 截图是产物**：`e2e/screenshots/` 被 gitignore；是否收进交付物由 S11 决定。
+16. **E2E 截图是产物**：`e2e/screenshots/` 被 gitignore。S11 决定：验收截图不进仓库，
+    单独放在 `D:\temp\s11-shots\` 并附路径；仓库只保留生成脚本以外的文档说明。
 
 ## 已修（勿重复做）
 

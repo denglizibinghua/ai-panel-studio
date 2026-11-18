@@ -1,7 +1,7 @@
 # TEST.md — 测试说明
 
 > 覆盖矩阵以 `docs/COVERAGE.md` 为准；本文件只写「怎么跑、跑什么、为什么这么跑」。
-> 最后一次更新：S10（E2E 闭环）。
+> 最后一次更新：S11（真调取证、删 QA 开关、文档）。
 
 ## 1. 命令
 
@@ -13,6 +13,10 @@ pnpm e2e                   # Playwright：seed + 起 server + 起 web，跑完�
 ```
 
 `pnpm e2e` **必须连跑两遍都绿**才算通过（第一遍留下数据、第二遍在新一轮 seed 上重跑）。
+
+隔离与两遍验收：E2E 的 seed 与 server 共用 `AI_PANEL_DB=.e2e/app.db`（已 gitignore），演示库
+`server/data/app.db` 一行不写；两遍之间没有任何共享状态，第二遍是新一轮 seed 上的独立重跑。
+真实模型证据只取真调写出的演示库，`.e2e/app.db` 的 `llm_calls`（fake 失败行会回落默认模型名）不能当证据。
 
 ## 2. 两层分工
 
