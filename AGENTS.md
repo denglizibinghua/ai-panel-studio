@@ -7,15 +7,13 @@
 
 ## 0. 当前阶段（只由审查 session 更新，只改这一段；执行 session 不许动）
 
-- 当前 Session：`S10` 已完成并复审通过（E2E 闭环）。`pnpm e2e` 连跑两遍绿（2 passed / ~7.4s），
-  主库 5 / 25 / 31 / 127 一行未写（E2E 走 `.e2e/app.db`，`AI_PANEL_DB` 隔离）。
-  fake 只替换 transport，`llm_calls` 的重试/成功/降级仍走生产路径；`FAKE_LLM` 唯一读取点在
-  `server/src/llm/index.ts`，未设时入口返回 `undefined`，500 `LLM_NOT_CONFIGURED` 预检保持有效。
-- 已完成：S0–S10（契约 / 协议 / 数据层 / 生成 / 账本 / 决策 / SSE / 主循环 / 三页 / 设计系统 / 接线 / 收尾 / E2E）。
-- 下一步：**S11 收口（人做，AI 只润色）**。开工第一件事：用真 Key 跑一场（1–3 分钟），让主库
-  `llm_calls` 出现 `model='deepseek-flash'` 的审计行 —— 现在主库 `llm_calls=0`，之前那 20 条是 fake
-  失败行，已随 E2E 场次删除，**不可作为模型证据**（用户已决定 S11 再跑）。
-- 未决事项全在 `docs/OPEN_ISSUES.md`；当前最高优先级只有一条：S11 的真调取证。
+- 当前 Session：`S11` 已完成（收口）。真调 discussion 81：270s、27 turn（1 开场 + 20 专家 + 5 追问 + 1 总结）、
+  总结 195 字且 INV-9 成立、`expert_turn_count=20`；81 号 68 行 `llm_calls` 全部 `model='deepseek-flash'`。
+  `pnpm check` 16 文件 / 104 测试、`pnpm e2e` 两遍 `2 passed`；`?state=` 与 `web/src/mock/` 已删，9 张截图重拍。
+- 已完成：S0–S11（代码 / 契约 / 测试 / E2E / PRD / 工作说明 / README / TEST）。
+- 下一步：**只剩人的动作** —— 仓库邀请 `xule@wisquest.com`、邮件（主题含真实姓名，BOSS 昵称不同要注明）、
+  发完截图回传。代码侧不要再改；任何改动必须重跑 `pnpm check` + `pnpm e2e` 两遍并更新本段。
+- 未决事项全在 `docs/OPEN_ISSUES.md`（均为已知不阻塞：support 启发式、E2E/`pnpm check` 各一次未复现的抖动等）。
 - 每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---

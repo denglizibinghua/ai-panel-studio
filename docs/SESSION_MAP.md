@@ -1,4 +1,4 @@
-﻿# Session 地图 — AI Panel Studio
+# Session 地图 — AI Panel Studio
 
 > 这份文件回答一个问题：**72 小时内，把"一整场讨论"切成 AI 能一口吃下的 11 块，每块怎么开场。**
 > 每条提示词都可以直接复制粘贴。配套约束在 `AGENTS.md`。
@@ -838,15 +838,15 @@ e2e/**, playwright.config.ts, server/src/llm/fake.ts, server/src/llm/index.ts
 
 不是 AI Session，是人的收口。照 `AGENTS.md` §8 的 DoD 逐条打勾：
 
-- [ ] `docs/PROMPT_LOG.md` 至少 5 段，四阶段齐全，每段有"卡点 + 怎么修"
-- [ ] `docs/WORK_REPORT.md` 1–1.5 页，含 2–3 个真实问题
-- [ ] **`docs/PRD.md`**（交付物原文明确要求 "PRD、ER 图等"，ER 已有，PRD 别漏）
-- [ ] `docs/TEST.md` 测试说明（跑什么、覆盖哪些 AC）
-- [ ] `README.md` 含：快速开始 / 环境变量（`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`PORT`）/ 技术选型理由 / API 列表 / 已完成 / 后续改进
-- [ ] **删掉 `?state=` QA 开关**，并重跑一遍截图（用 S7.5 之后那套视觉）
-- [ ] **模型名如实写**：实际服务模型是 `deepseek-flash`（`deepseek-chat` 已下线，Pro 档由 flash 承接），
+- [x] `docs/PROMPT_LOG.md` 至少 5 段，四阶段齐全，每段有"卡点 + 怎么修"
+- [x] `docs/WORK_REPORT.md` 1–1.5 页，含 2–3 个真实问题
+- [x] **`docs/PRD.md`**（交付物原文明确要求 "PRD、ER 图等"，ER 已有，PRD 别漏）
+- [x] `docs/TEST.md` 测试说明（跑什么、覆盖哪些 AC）
+- [x] `README.md` 含：快速开始 / 环境变量（`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL`、`PORT`）/ 技术选型理由 / API 列表 / 已完成 / 后续改进
+- [x] **删掉 `?state=` QA 开关**，并重跑一遍截图（用 S7.5 之后那套视觉）
+- [x] **模型名如实写**：实际服务模型是 `deepseek-flash`（`deepseek-chat` 已下线，Pro 档由 flash 承接），
       不要写成自己证不了的型号；`llm_calls` 里存的就是响应返回的真实 model，可直接当证据
-- [ ] `git log --oneline` 能看出层级。**约定 commit 前缀**：
+- [x] `git log --oneline` 能看出层级。**约定 commit 前缀**：
       `docs:` → `schema:` → `test:` → `feat:` → `ui:` → `e2e:`
       （作业原文给的示例顺序是 docs/schema → ui → tests → feat → logic；我们的实际顺序更贴近工程节奏，
        在 WORK_REPORT 里用一段话说明为什么，比硬伪造历史强）
