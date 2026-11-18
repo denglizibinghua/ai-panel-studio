@@ -198,8 +198,18 @@ describe('extract support_guest_ids mapping', () => {
       ledger: () => speakLedger('专家1号'),
       speech: () => OPENING,
       extract: () => ({
-        consensus: ['专家1号与专家2号都认可成本会下降，但节奏不同。'],
-        divergence: ['专家1号认为体验优先，专家2号认为价格优先；路人甲不表态。'],
+        consensus: [
+          {
+            text: '专家1号与专家2号都认可成本会下降，但节奏不同。',
+            supporters: ['专家1号', '专家2号'],
+          },
+        ],
+        divergence: [
+          {
+            text: '专家1号认为体验优先，专家2号认为价格优先；路人甲不表态。',
+            supporters: ['专家1号', '专家2号', '路人甲'],
+          },
+        ],
       }),
     });
 

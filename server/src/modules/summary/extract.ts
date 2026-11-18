@@ -32,24 +32,44 @@ export interface ExtractContext {
   roster: LedgerRosterMember[];
 }
 
-export interface ExtractedPoints {
-  consensus: string[];
-  divergence: string[];
+export interface ExtractedPoint {
+  text: string;
+  /** Roster names the model says actually hold this view; never guessed here. */
+  supporters: string[];
 }
+
+export interface ExtractedPoints {
+  consensus: ExtractedPoint[];
+  divergence: ExtractedPoint[];
+}
+
+/**
+ * One point is either the structured object or a legacy bare string. The legacy
+ * form is still accepted so an older model response is not thrown away, but it
+ * carries no supporter signal: `supporters` stays empty rather than falling back
+ * to substring matching.
+ */
+const pointSchema = z.union([
+  z.string(),
+  z.object({
+    text: z.string(),
+    supporters: z.array(z.string()).default([]),
+  }),
+]);
 
 const extractionSchema = z
   .object({
-    consensus: z.array(z.string()).default([]),
-    divergence: z.array(z.string()).default([]),
+    consensus: z.array(pointSchema).default([]),
+    divergence: z.array(pointSchema).default([]),
   })
   .strict();
 
 const SYSTEM_PROMPT = [
   '你是圆桌讨论的记录员，负责从最近几条发言里提炼共识与分歧。',
-  '只输出 JSON：{"consensus":["..."],"divergence":["..."]}。',
-  '每条必须是中文一句话，不超过 120 字；没有就返回空数组。',
+  '只输出 JSON：{"consensus":[{"text":"...","supporters":["姓名"]}],"divergence":[{"text":"...","supporters":["姓名"]}]}。',
+  '每条 text 必须是中文一句话，不超过 120 字；没有就返回空数组。',
+  'supporters 只填真正持该观点的阵容嘉宾姓名，必须与阵容完全一致；不确定就填 []，不要臆造姓名。',
   '共识写成所有或多数人都认可的判断；分歧必须写明对立的两面。',
-  '如果有明确的支持者，请在句子里写出其姓名（与阵容一致）；不要臆造姓名。',
   '不要复述原句，不要评价，不要输出 JSON 以外的任何文字。',
 ].join('\n');
 
@@ -123,13 +143,36 @@ export async function extractPoints(
     return { consensus: [], divergence: [] };
   }
 
-  const clean = (items: string[]): string[] =>
-    items.map(truncatePoint).filter((item) => item.length > 0);
-
   return {
-    consensus: clean(result.data.consensus),
-    divergence: clean(result.data.divergence),
+    consensus: normalizePoints(result.data.consensus),
+    divergence: normalizePoints(result.data.divergence),
   };
+}
+
+type RawPoint = z.infer<typeof pointSchema>;
+
+/** Truncates text and sanitises `supporters`; a legacy string gets no support. */
+function normalizePoints(items: RawPoint[]): ExtractedPoint[] {
+  const points: ExtractedPoint[] = [];
+  for (const item of items) {
+    if (typeof item === 'string') {
+      const text = truncatePoint(item);
+      if (text.length > 0) {
+        points.push({ text, supporters: [] });
+      }
+      continue;
+    }
+
+    const text = truncatePoint(item.text);
+    if (text.length === 0) {
+      continue;
+    }
+    const supporters = [
+      ...new Set(item.supporters.map((name) => name.trim()).filter((name) => name.length > 0)),
+    ];
+    points.push({ text, supporters });
+  }
+  return points;
 }
 
 export interface PersistExtractionDeps {
@@ -148,21 +191,26 @@ interface PointRow {
 }
 
 /**
- * F5 "谁同意" support: only exact roster names are accepted. Unknown names are
- * dropped (never guessed), and a one-character name is ignored to avoid
- * accidental substring hits.
+ * F5 "谁同意" support: the model names supporters explicitly, and only exact
+ * roster names are accepted. Unknown names are dropped (never guessed),
+ * duplicates are deduped, and the result is sorted ascending.
  */
-export function matchSupportGuestIds(
-  text: string,
+export function resolveSupportGuestIds(
+  names: readonly string[],
   roster: readonly LedgerRosterMember[] | undefined,
 ): number[] {
-  if (roster === undefined) {
+  if (roster === undefined || names.length === 0) {
     return [];
   }
-  const ids = new Set<number>();
+  const idByName = new Map<string, number>();
   for (const member of roster) {
-    if (member.name.length >= 2 && text.includes(member.name)) {
-      ids.add(member.id);
+    idByName.set(member.name, member.id);
+  }
+  const ids = new Set<number>();
+  for (const name of names) {
+    const id = idByName.get(name.trim());
+    if (id !== undefined) {
+      ids.add(id);
     }
   }
   return [...ids].sort((left, right) => left - right);
@@ -185,18 +233,18 @@ export function persistExtraction(db: Db, deps: PersistExtractionDeps): Persiste
 
   const write = (
     kind: 'consensus' | 'divergence',
-    texts: string[],
+    points: ExtractedPoint[],
     events: PersistedEvent[],
   ): void => {
     const insert = kind === 'consensus' ? insertConsensus : insertDivergence;
     const table = kind === 'consensus' ? 'consensus_points' : 'divergence_points';
     const type = kind === 'consensus' ? 'consensus.added' : 'divergence.added';
 
-    for (const text of texts) {
-      const support = matchSupportGuestIds(text, deps.roster);
+    for (const point of points) {
+      const support = resolveSupportGuestIds(point.supporters, deps.roster);
       const info = insert.run(
         deps.discussionId,
-        text,
+        point.text,
         JSON.stringify(support),
         deps.roundNo,
         deps.at,

@@ -284,12 +284,63 @@ function buildSummary(): string {
   return JSON.stringify({ content: text });
 }
 
-function buildExtraction(rotation: number): string {
+function buildExtraction(user: string, rotation: number): string {
   const index = rotation % CONSENSUS_TEMPLATES.length;
+  const roster = readExtractionRosterNames(user);
+  const spoken = readTranscriptSpeakers(user);
+  // Only experts are on the extraction roster line, so intersecting keeps the
+  // host opening out of `supporters`. Fall back to the roster before any expert
+  // has spoken (and the extraction window itself runs after 2 expert turns).
+  const fromTranscript = spoken.filter((name) => roster.includes(name));
+  const supporters = (fromTranscript.length > 0 ? fromTranscript : roster).slice(0, 2);
   return JSON.stringify({
-    consensus: [CONSENSUS_TEMPLATES[index] ?? '双方都认可成本压力真实存在。'],
-    divergence: [DIVERGENCE_TEMPLATES[index] ?? '推进节奏应该由市场决定，还是先由监管划定边界。'],
+    consensus: [
+      {
+        text: CONSENSUS_TEMPLATES[index] ?? '双方都认可成本压力真实存在。',
+        supporters,
+      },
+    ],
+    divergence: [
+      {
+        text:
+          DIVERGENCE_TEMPLATES[index] ?? '推进节奏应该由市场决定，还是先由监管划定边界。',
+        supporters,
+      },
+    ],
   });
+}
+
+/** Extraction roster line is `阵容：姓名（职业）、姓名（职业）` (experts only). */
+function readExtractionRosterNames(user: string): string[] {
+  const line = /阵容：([^\n]+)/.exec(user)?.[1];
+  if (line === undefined) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const part of line.split('、')) {
+    const name = part.split('（')[0]?.trim();
+    if (name !== undefined && name.length > 0) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/** Transcript lines are `- 姓名（speech_type）：content`. */
+function readTranscriptSpeakers(user: string): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const pattern = /^-\s*([^（\n]+)（[^）\n]*）：/gm;
+  let match = pattern.exec(user);
+  while (match !== null) {
+    const name = match[1]?.trim();
+    if (name !== undefined && name.length > 0 && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+    match = pattern.exec(user);
+  }
+  return names;
 }
 
 interface FakeState {
@@ -333,7 +384,7 @@ function respond(req: ChatJsonRequest, system: string, user: string, state: Fake
   // module === 'summary' covers both the recorder (extraction) and the closing
   // summary; only the system prompt tells them apart.
   if (system.includes(RECORDER_MARKER)) {
-    return buildExtraction(bump(state.extractCalls, keyOf(req)));
+    return buildExtraction(user, bump(state.extractCalls, keyOf(req)));
   }
   return buildSummary();
 }
