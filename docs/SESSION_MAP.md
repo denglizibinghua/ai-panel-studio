@@ -773,7 +773,9 @@ server/test/summary/**
 ## S10 · E2E 闭环 ｜ E2E
 
 - **输入**：`contracts/*`
-- **允许改**：`e2e/**`、`playwright.config.ts`、`server/src/llm/fake.ts`、`server/src/llm/index.ts`
+- **允许改**：`e2e/**`、`playwright.config.ts`、`server/src/llm/fake.ts`、`server/src/llm/index.ts`、
+  `server/src/index.ts`、`server/src/db/index.ts`（只加 `AI_PANEL_DB`）、`server/test/llm/**`、
+  `.gitignore`、`docs/TEST.md`、根 `package.json` 的 `e2e` 脚本与 `@playwright/test`（预批准依赖）
 - **验收**：`pnpm e2e` 一次通过；产物里有截图；二次运行也通过（可重复）
 
 **S9 之后的增量（S10 必须带上）**

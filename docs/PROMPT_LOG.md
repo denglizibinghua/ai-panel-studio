@@ -900,3 +900,36 @@ merge 单向 final/dropped、support 精确映射、三种兜底、retry 前置 
 **教训**：兜底分支的「能跑」与「数据诚实」是两件事。retry 的前置、事务、INV-9 全对，
 但 `reason` 字段在说另一种终止原因——只有把 payload 逐字段读一遍才会撞见。
 S10 的断言要覆盖 `reason`，不能只断言 `status`。
+
+---
+
+### S10 · E2E 闭环（2026-11-18）
+
+**核心 Prompt**（父段 + 我给执行 session 的增量）：一条 `full-flow` 走完首页→新建→确认→演播厅→总结，
+同 context（AC-3.8 的 sessionId）；`FAKE_LLM=1`；总结从 `.summary-panel__text` 断言；retry 场景自己造
+`failed + ALL_SPEAKERS_FAILED` 并断言 `reason='retry_summary'`；小屏看 `scrollHeight`。
+
+**两处拍板**：
+1. fake 的接入点选**入口注入**（`server/src/index.ts` → `createLlmOverride`）：假的是 transport，不是 client，
+   `llm_calls` 的重试/成功/降级仍走生产路径；生产返回 `undefined`，500 预检不被吃掉。
+   锁死：`FAKE_LLM` 只在 `llm/index.ts` 读；补 `server/test/llm/index.test.ts` 防止入口"顺手"造真 client。
+2. retry 的失败注入只打挂**专家**、保留主持人开场：`ALL_SPEAKERS_FAILED` 的判定本来就只数专家，
+   空 transcript 是另一条分支（`empty_transcript`，单测覆盖）。
+
+**E2E 隔离**：`AI_PANEL_DB` 指向 `.e2e/app.db`（已 gitignore），seed 与 server 共用；演示库一行不进。
+`reuseExistingServer: false` + `--host 127.0.0.1`（Vite 默认绑 ::1 的坑）写进 `docs/TEST.md`。
+
+**独立复跑**：`pnpm e2e` 连跑两遍，各 `2 passed (7.4s)`，exit 0；`pnpm check` 16 文件 / 104 测试；
+主库仍是 5 / 25 / 31 / 127、`llm_calls=0`；端口已释放。
+
+**复审发现**：
+- `docs/TEST.md` 有一处「107 行内」的笔误（line count 不是覆盖的度量），已改。
+- **`pnpm check` 首跑失败过一次**（`ELIFECYCLE Test failed`，没留完整日志），随后单测 5 连绿 + 全链路 2 次绿，
+  未复现，无根因。按"没有证据不下结论"记进 `OPEN_ISSUES`，不假装修好。
+- **真调证据缺口**：主库 `llm_calls=0`。之前 20 条 `deepseek-flash` 是 fake 失败行（transport 抛错回落默认模型名），
+  随 E2E 场次删了。用户决定 S11 跑，S11 开工第一件事就是补这一场。
+- `web/src/mock/mock.ts` 现在彻底无引用，S11 决定删还是说明保留。
+
+**教训**：E2E 的"可重复"不是跑两遍都绿，而是**两遍之间没有任何共享状态**。这次靠 `AI_PANEL_DB` 做到，
+比"跑完删行"稳；另外，断言 `run.finished.reason` 必须从事件重放取证 —— UI 永远不显示它，
+单看页面会把 `retry_summary` 和 `empty_transcript` 混成同一个"已结束"。
