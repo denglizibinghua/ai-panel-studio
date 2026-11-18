@@ -16,6 +16,8 @@ server/data/*.db-shm
 server/test/data/
 
 # test artifacts
+# isolated E2E database (AI_PANEL_DB -> .e2e/app.db)
+.e2e/
 test-results/
 playwright-report/
 e2e/screenshots/

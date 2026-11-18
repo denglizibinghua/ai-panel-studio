@@ -6,8 +6,12 @@
   "scripts": {
     "check": "pnpm -C shared build && pnpm -C server build && pnpm -C server test",
     "test": "pnpm -C server test",
+    "e2e": "playwright test",
     "db:migrate": "pnpm -C server db:migrate",
     "db:seed": "pnpm -C server db:seed",
     "db:report": "node scripts/db-report.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
   }
 }
