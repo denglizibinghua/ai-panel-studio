@@ -98,7 +98,7 @@
 
 **独立验收标准**
 
-- AC-3.1 WHEN 用户打开首页 THEN THE SYSTEM SHALL 在 2s 内返回全部讨论，按 `updated_at` 倒序，每行至少含 `id / topic / status / expert_count / updated_at`。
+- AC-3.1 WHEN 用户打开首页 THEN THE SYSTEM SHALL 在 2s 内返回全部讨论，按 `updated_at` 倒序，每行至少含 `id / topic / status / expert_count / updated_at`。自 S8 起列表行还额外携带 `guest_count`（含主持人的嘉宾行数）、`expert_color_ids`（已确认专家按 `speaking_order ASC, id ASC` 的 `color_id` 数组，未确认为空数组）与 `summary_text`（可为 `null`）；这些字段为 additive 扩展，不改变上述既有字段语义。
 - AC-3.2 WHEN 列表渲染 THEN THE SYSTEM SHALL 先渲染「进行中」分组（`draft / generating / ready / running`，带「加入」入口），再渲染「已结束」分组（`finished / failed / cancelled`，只读入口）；接口支持 `?active=1` 只返回进行中。
 - AC-3.3 WHEN 用户点击加入观察 THEN THE SYSTEM SHALL 以只读方式进入演播厅：不触发 `guests/generate`、`start`、`cancel` 中的任何一个。
 - AC-3.4 WHILE 观察一个 `running` 讨论 THEN THE SYSTEM SHALL 使观察者与发起者读到同一份 `events` 表、同一 `seq` 序列，两者 transcript 条数与内容一致。

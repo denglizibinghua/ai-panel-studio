@@ -641,7 +641,8 @@ components:
         列表行与详情共同字段（AC-3.1 的「至少含」）。
         **刻意不加 `additionalProperties: false`**：`DiscussionDetail` 用 `allOf` 在本对象上叠加
         详情字段，若此处封死，`allOf` 的另一支会全部被判为多余属性（JSON Schema 语义）。
-      required: [id, topic, status, expert_count, updated_at]
+      required:
+        [id, topic, status, expert_count, updated_at, guest_count, expert_color_ids, summary_text]
       properties:
         id:
           type: integer
@@ -662,6 +663,27 @@ components:
           type: string
           format: date-time
           description: 任何字段变更或事件写入都刷新；列表按此字段倒序（AC-3.1）。
+        guest_count:
+          type: integer
+          minimum: 0
+          description: |
+            该讨论 `guests` 表行数（含主持人）。无阵容（如 `draft`）为 0。
+        expert_color_ids:
+          type: array
+          maxItems: 8
+          description: |
+            已确认阵容中 `locked=1 AND role='expert'` 的 `color_id`，按
+            `speaking_order ASC, id ASC` 排序；阵容未确认（如 `draft`）为空数组。
+          items:
+            $ref: '#/components/schemas/ColorId'
+        summary_text:
+          type: string
+          nullable: true
+          maxLength: 400
+          description: |
+            `discussions.summary_text` 原样返回（不截断）；未结束时为 `null`。
+            `status='finished'` 时为 150–250 字中文纯文本总结（AC-1.14）；空 transcript 用固定文案
+            「本场讨论未产生有效发言」（AC-1.15）。
 
     DiscussionDetail:
       description: |
@@ -671,7 +693,6 @@ components:
         - type: object
           required:
             - session_id
-            - summary_text
             - error_code
             - last_event_seq
             - created_at
@@ -684,13 +705,6 @@ components:
               nullable: true
               maxLength: 64
               description: '发起者匿名标识；仅用于前端判定是否隐藏四个写操作入口（AC-3.8），后端不校验。'
-            summary_text:
-              type: string
-              nullable: true
-              maxLength: 400
-              description: |
-                `status='finished'` 时为 150–250 字中文纯文本总结（AC-1.14）；空 transcript 用固定文案
-                「本场讨论未产生有效发言」（AC-1.15）。其他状态为 `null`。
             error_code:
               type: string
               nullable: true

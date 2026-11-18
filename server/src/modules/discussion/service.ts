@@ -7,7 +7,7 @@
  * `status` through `status.ts`, the single status authority (H8).
  */
 import { z } from 'zod';
-import { guestSchema, type DiscussionStatus, type Guest } from '@ai-panel/shared';
+import { colorIdSchema, guestSchema, type DiscussionStatus, type Guest } from '@ai-panel/shared';
 import type { Db } from '../../db';
 import { EventBus } from '../sse/bus';
 import { appendEventInTx, serializeEventPayload } from '../sse/publish';
@@ -30,13 +30,15 @@ export const discussionSummarySchema = z
     status: z.string(),
     expert_count: z.number().int().min(1).max(8),
     updated_at: z.string(),
+    guest_count: z.number().int().min(0),
+    expert_color_ids: z.array(colorIdSchema).max(8),
+    summary_text: z.string().max(400).nullable(),
   })
   .strict();
 
 export const discussionDetailSchema = discussionSummarySchema
   .extend({
     session_id: z.string().max(64).nullable(),
-    summary_text: z.string().max(400).nullable(),
     error_code: z
       .enum(['LLM_NOT_CONFIGURED', 'LLM_UPSTREAM_ERROR', 'ALL_SPEAKERS_FAILED'])
       .nullable(),
@@ -57,11 +59,14 @@ interface SummaryRow {
   status: string;
   expert_count: number;
   updated_at: string;
+  guest_count: number;
+  /** Raw `group_concat` output; NULL when no confirmed expert is in the lineup. */
+  expert_color_ids: string | null;
+  summary_text: string | null;
 }
 
 interface DetailRow extends SummaryRow {
   session_id: string | null;
-  summary_text: string | null;
   error_code: string | null;
   last_event_seq: number;
   created_at: string;
@@ -81,6 +86,25 @@ interface GuestRow {
   locked: 0 | 1;
 }
 
+/**
+ * Shared projection for list and detail: the three additive fields
+ * (`guest_count` / `expert_color_ids` / `summary_text`) are computed inline so
+ * neither read path needs a per-row follow-up query. `expert_color_ids` order is
+ * pinned by the aggregate `ORDER BY` (SQLite >= 3.44), and an unconfirmed
+ * lineup (no `locked=1` experts) yields NULL, mapped to `[]` by `toSummary`.
+ */
+const SUMMARY_COLUMNS = `
+  d.id, d.topic, d.status, d.expert_count, d.updated_at, d.summary_text,
+  (SELECT COUNT(*) FROM guests g WHERE g.discussion_id = d.id) AS guest_count,
+  (SELECT group_concat(g.color_id, ',' ORDER BY g.speaking_order ASC, g.id ASC)
+     FROM guests g
+    WHERE g.discussion_id = d.id AND g.locked = 1 AND g.role = 'expert') AS expert_color_ids
+`;
+
+function parseColorIds(raw: string | null): string[] {
+  return raw === null || raw === '' ? [] : raw.split(',');
+}
+
 function toSummary(row: SummaryRow): DiscussionSummary {
   return discussionSummarySchema.parse({
     id: row.id,
@@ -88,6 +112,9 @@ function toSummary(row: SummaryRow): DiscussionSummary {
     status: parseStatus(row.status),
     expert_count: row.expert_count,
     updated_at: row.updated_at,
+    guest_count: row.guest_count,
+    expert_color_ids: parseColorIds(row.expert_color_ids),
+    summary_text: row.summary_text,
   });
 }
 
@@ -119,9 +146,9 @@ function loadGuests(db: Db, discussionId: number): Guest[] {
 export function loadDetail(db: Db, discussionId: number): DiscussionDetail | null {
   const row = db
     .prepare(
-      `SELECT id, topic, status, expert_count, session_id, summary_text, error_code,
-              last_event_seq, created_at, updated_at, started_at, finished_at
-         FROM discussions WHERE id = ?`,
+      `SELECT ${SUMMARY_COLUMNS}, d.session_id, d.error_code,
+              d.last_event_seq, d.created_at, d.started_at, d.finished_at
+         FROM discussions d WHERE d.id = ?`,
     )
     .get(discussionId) as DetailRow | undefined;
   if (row === undefined) {
@@ -137,7 +164,6 @@ export function loadDetail(db: Db, discussionId: number): DiscussionDetail | nul
     ...toSummary(row),
     status,
     session_id: row.session_id,
-    summary_text: row.summary_text,
     error_code: row.error_code,
     last_event_seq: row.last_event_seq,
     created_at: row.created_at,
@@ -151,14 +177,14 @@ const ACTIVE_STATUSES: readonly DiscussionStatus[] = ['draft', 'generating', 're
 
 export function listDiscussions(db: Db, activeOnly: boolean): DiscussionSummary[] {
   const where = activeOnly
-    ? `WHERE status IN (${ACTIVE_STATUSES.map(() => '?').join(', ')})`
+    ? `WHERE d.status IN (${ACTIVE_STATUSES.map(() => '?').join(', ')})`
     : '';
   const params = activeOnly ? [...ACTIVE_STATUSES] : [];
   const rows = db
     .prepare(
-      `SELECT id, topic, status, expert_count, updated_at
-         FROM discussions ${where}
-        ORDER BY updated_at DESC, id DESC`,
+      `SELECT ${SUMMARY_COLUMNS}
+         FROM discussions d ${where}
+        ORDER BY d.updated_at DESC, d.id DESC`,
     )
     .all(...params) as SummaryRow[];
   return rows.map(toSummary);

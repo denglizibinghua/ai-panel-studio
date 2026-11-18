@@ -6,6 +6,7 @@ import {
   createScriptedLlm,
   createTempDb,
   insertDiscussion,
+  insertLineup,
   removeTempFiles,
   seedReadyDiscussion,
   speakLedger,
@@ -116,6 +117,46 @@ describe('GET /api/discussions', () => {
 
     await app.close();
   });
+
+  it('carries guest_count / expert_color_ids / summary_text (empty for draft, filled after lineup)', async () => {
+    const { db, app } = setup('list-extras');
+    const draftId = insertDiscussion(db, { topic: '草稿讨论', status: 'draft' });
+    const finishedId = insertDiscussion(db, { topic: '已结束讨论', status: 'finished' });
+    // Exactly 400 chars proves summary_text is passed through, not truncated.
+    const longSummary = '总'.repeat(400);
+    db.prepare('UPDATE discussions SET summary_text = ? WHERE id = ?').run(longSummary, finishedId);
+
+    interface ListRow {
+      id: number;
+      guest_count: number;
+      expert_color_ids: string[];
+      summary_text: string | null;
+    }
+    const listRows = async (): Promise<ListRow[]> =>
+      (await app.inject({ method: 'GET', url: '/api/discussions' })).json() as ListRow[];
+    const rowOf = (rows: ListRow[], id: number): ListRow => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (row === undefined) {
+        throw new Error(`missing row ${id}`);
+      }
+      return row;
+    };
+
+    const before = await listRows();
+    expect(rowOf(before, draftId)).toMatchObject({
+      guest_count: 0,
+      expert_color_ids: [],
+      summary_text: null,
+    });
+    expect(rowOf(before, finishedId).summary_text).toBe(longSummary);
+
+    insertLineup(db, draftId, 3, 1);
+    const draftAfter = rowOf(await listRows(), draftId);
+    expect(draftAfter.guest_count).toBe(4);
+    expect(draftAfter.expert_color_ids).toEqual(['rose', 'sky', 'emerald']);
+
+    await app.close();
+  });
 });
 
 describe('GET /api/discussions/:id', () => {
@@ -128,6 +169,9 @@ describe('GET /api/discussions/:id', () => {
     const body = response.json();
     expect(body.status).toBe('ready');
     expect(body.guests).toHaveLength(4);
+    expect(body.guest_count).toBe(4);
+    expect(body.expert_color_ids).toEqual(['rose', 'sky', 'emerald']);
+    expect(body.summary_text).toBeNull();
     expect(body).not.toHaveProperty('turns');
     expect(body).not.toHaveProperty('agent_status');
     expect(body).not.toHaveProperty('consensus_points');
