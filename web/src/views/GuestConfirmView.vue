@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import AppCard from '../components/common/AppCard.vue';
 import AppEmpty from '../components/common/AppEmpty.vue';
@@ -14,12 +14,10 @@ import { useHomeStore } from '../stores/home';
  *
  * 与首页同一页框、同一页头高度、同一标题字号阶（xl / sm）。
  * S8：阵容来自 `GET /api/discussions/{id}` 的 `guests`；重新生成与确认都走 store。
- * `?state=loading|error` 仍是纯 QA 开关，现在覆盖真实 store 状态。
  */
 const props = defineProps<{ id: string }>();
 
 const router = useRouter();
-const route = useRoute();
 const home = useHomeStore();
 
 const discussionId = computed(() => Number(props.id));
@@ -31,10 +29,6 @@ const expertCount = computed(() => roster.value.filter((guest) => guest.role ===
 const rosterSummary = computed(() => `${expertCount.value} 位专家 + ${hostCount.value} 位主持`);
 
 const pageState = computed<'ready' | 'loading' | 'error'>(() => {
-  const raw = route.query.state;
-  if (raw === 'loading' || raw === 'error') {
-    return raw;
-  }
   // 只有「详情还没拿到」才算页面级错误；confirm / start 的失败是就地提示，
   // 不能把已经加载好的阵容整页换掉（否则 409 之后用户既看不到阵容也无法重试）。
   if (home.detail === null) {
@@ -107,9 +101,6 @@ async function confirmRoster(): Promise<void> {
 }
 
 async function retry(): Promise<void> {
-  if (route.query.state !== undefined) {
-    await router.replace({ query: { ...route.query, state: undefined } });
-  }
   const id = discussionId.value;
   if (Number.isFinite(id)) {
     await home.fetchDetail(id);

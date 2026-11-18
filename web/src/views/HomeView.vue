@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import type { DiscussionStatus } from '@ai-panel/shared';
 import AppButton from '../components/common/AppButton.vue';
 import AppCard from '../components/common/AppCard.vue';
@@ -20,7 +20,7 @@ import { useHomeStore } from '../stores/home';
  *
  * S8：列表、创建、错误全部走 `home` store，不再 import mock。
  */
-type ListState = 'default' | 'empty' | 'loading' | 'error';
+type ListState = 'default' | 'loading' | 'error';
 
 /** AC-3.2：draft 属于「进行中」（待生成），不再归档到已结束。 */
 const ACTIVE_STATUSES: ReadonlySet<DiscussionStatus> = new Set([
@@ -36,27 +36,11 @@ const ENDED_STATUSES: ReadonlySet<DiscussionStatus> = new Set([
   'cancelled',
 ]);
 
-const route = useRoute();
 const router = useRouter();
 const home = useHomeStore();
 
-/**
- * 仅供 QA 截图：?state=empty|loading|error 覆盖**真实** store 状态，
- * 只读 query，不暴露入口（S11 统一删除并重拍截图）。
- */
-const stateOverride = computed<ListState | null>(() => {
-  const raw = route.query.state;
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  if (value === 'empty' || value === 'loading' || value === 'error') {
-    return value;
-  }
-  return null;
-});
-
+/** 列表状态只由真实 store 推导，没有任何 query 覆盖入口。 */
 const listState = computed<ListState>(() => {
-  if (stateOverride.value !== null) {
-    return stateOverride.value;
-  }
   if (home.loading && home.list.length === 0) {
     return 'loading';
   }
@@ -68,15 +52,11 @@ const listState = computed<ListState>(() => {
 });
 
 const activeDiscussions = computed(() =>
-  listState.value === 'empty'
-    ? []
-    : home.list.filter((discussion) => ACTIVE_STATUSES.has(discussion.status)),
+  home.list.filter((discussion) => ACTIVE_STATUSES.has(discussion.status)),
 );
 
 const endedDiscussions = computed(() =>
-  listState.value === 'empty'
-    ? []
-    : home.list.filter((discussion) => ENDED_STATUSES.has(discussion.status)),
+  home.list.filter((discussion) => ENDED_STATUSES.has(discussion.status)),
 );
 
 const activeCount = computed(() => activeDiscussions.value.length);
@@ -102,12 +82,7 @@ async function handleSubmit(payload: { topic: string; expertCount: number }): Pr
 }
 
 function retry(): void {
-  void (async (): Promise<void> => {
-    if (route.query.state !== undefined) {
-      await router.replace({ name: 'home', query: {} });
-    }
-    await home.load();
-  })();
+  void home.load();
 }
 
 onMounted(() => {
@@ -190,7 +165,7 @@ onMounted(() => {
             </div>
 
             <AppEmpty
-              v-if="listState === 'empty' || (activeDiscussions.length === 0 && !home.busy)"
+              v-if="activeDiscussions.length === 0 && !home.busy"
               class="home__empty"
               title="暂无进行中的讨论"
               hint="点击右上角「发起新讨论」，从一个议题开始。"
@@ -214,7 +189,7 @@ onMounted(() => {
             </div>
 
             <AppEmpty
-              v-if="listState === 'empty' || endedDiscussions.length === 0"
+              v-if="endedDiscussions.length === 0"
               class="home__empty"
               title="还没有结束的讨论"
               hint="讨论结束或取消后会归档到这里。"

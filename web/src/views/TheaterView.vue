@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import AppEmpty from '../components/common/AppEmpty.vue';
 import AppPanel from '../components/common/AppPanel.vue';
@@ -25,7 +25,6 @@ import { useDiscussionStore } from '../stores/discussion';
  */
 const props = defineProps<{ id: string }>();
 
-const route = useRoute();
 const router = useRouter();
 const store = useDiscussionStore();
 
@@ -36,18 +35,6 @@ const status = computed(() => store.status);
 const statusLabel = computed(() => store.statusLabel);
 const canCancel = computed(() => store.canCancel);
 
-/**
- * QA 用：?state=empty 空态、?state=failed 失败态。
- * S8 起覆盖的是**真实 store 状态**，不再是无请求的假开关。
- */
-type QaState = 'empty' | 'failed' | null;
-
-const qaState = computed<QaState>(() => {
-  const raw = route.query.state;
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === 'empty' || value === 'failed' ? value : null;
-});
-
 /** AC-1.13：专家发言上限 20 条；主持人开场 / 追问 / 总结不计入这个数。 */
 const EXPERT_TURN_CAP = 20;
 
@@ -57,11 +44,11 @@ const loadFailure = computed(
 );
 
 /**
- * 只有「打不开」和 QA 的 `?state=failed` 才整块换掉现场。
+ * 只有「打不开」才整块换掉现场。
  * 一场跑失败（`status='failed'`）要保留 transcript，并交给底部 SummaryPanel
  * 显示失败态与重试按钮（S9；ALL_SPEAKERS_FAILED 才能重试）。
  */
-const stageFailure = computed(() => qaState.value === 'failed' || loadFailure.value);
+const stageFailure = computed(() => loadFailure.value);
 
 const failureTitle = computed(() =>
   loadFailure.value ? '无法打开这场讨论' : '本场讨论失败',
@@ -71,28 +58,21 @@ const failureHint = computed(() =>
 );
 
 const displayedTurns = computed(() =>
-  qaState.value === 'empty'
-    ? []
-    : store.turns.filter((turn) => turn.speech_type !== 'summary'),
+  store.turns.filter((turn) => turn.speech_type !== 'summary'),
 );
-const consensusPoints = computed(() => (qaState.value === 'empty' ? [] : store.consensus));
-const divergencePoints = computed(() => (qaState.value === 'empty' ? [] : store.divergence));
+const consensusPoints = computed(() => store.consensus);
+const divergencePoints = computed(() => store.divergence);
 
 /** 收尾总结只在终态面板里出现一次；transcript 已过滤 summary 行。 */
 const showSummary = computed(
-  () =>
-    qaState.value !== 'empty' &&
-    (store.status === 'finished' || store.status === 'failed'),
+  () => store.status === 'finished' || store.status === 'failed',
 );
 
 /**
  * store 的 `expertTurnCount` 只数专家 `turn.done`（不含主持开场 / 追问 / 总结），
  * 与 `run.finished.expert_turn_count` 同口径 —— 分母 20 才对得上（AC-1.13）。
- * `?state=empty` 时进度归零，配合 QA 截图。
  */
-const expertTurnCount = computed(() =>
-  qaState.value === 'empty' ? 0 : store.expertTurnCount,
-);
+const expertTurnCount = computed(() => store.expertTurnCount);
 
 /* ── 响应式状态 ──────────────────────────────────────────
  * 断点判断 100% 在 CSS：@media 改 .studio 自己的栅格，@container 改面板内部。
@@ -133,7 +113,7 @@ function exitStudio(): void {
   void router.push({ name: 'home' });
 }
 
-/** 失败态「重试」：重新 open（重放事件、重建五个面板），不靠剥 query 参数。 */
+/** 失败态「重试」：重新 open（重放事件、重建五个面板）。 */
 function retry(): void {
   if (Number.isFinite(numericId.value)) {
     void store.open(numericId.value);
