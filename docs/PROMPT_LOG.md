@@ -31,7 +31,7 @@
 - [x] S6.5 · 讨论生命周期 + 主循环 — 阶段：TDD
 - [x] S7 · 演播厅布局 — 阶段：DDD
 - [x] S7.5 · 设计系统重写 — 阶段：DDD
-- [ ] S8 · 状态层接线 — 阶段：DDD
+- [x] S8 · 状态层接线 — 阶段：DDD
 - [ ] S9 · 收尾与兜底 — 阶段：TDD
 - [ ] S10 · E2E 闭环 — 阶段：E2E
 
@@ -781,3 +781,91 @@ mock 只有 10 条，三档截图都看不出来。
 **教训**：视觉轮的真正验收是「数据语义」，不是像素。四个已知视觉问题确实都修掉了，
 但最危险的一处（27/20）只有把 mock 换成真实场次才会现形。
 凡是「分母写死 20、分子来自列表长度」的地方，都要回到 AC 看单位。
+
+
+---
+
+### S8 · 状态层接线（2026-11-18）
+
+**阶段**：DDD
+
+**核心 Prompt**（执行 session 拿到的是 `docs/SESSION_MAP.md` 的 S8 段 + S7.5 之后的 6 条增量）：
+1. 「不要用原生 `EventSource`：它不能带 `Last-Event-ID`、404 会自动重连、分不清正常结束与断线。
+   改用 `fetch` + `response.body.getReader()` 手写按 `\n\n` 切帧，正常结束不重连、404 不重连、网络错误 1s→2s→4s 最多 3 次。」
+2. 「store 必须有五份互相独立的 state：status / agentStatusMap / turns / consensus / divergence，不许合并成一个大对象；
+   持久帧按 seq 去重，`turn.delta` 不入数组，`turn.started` 按 `(guest_id, turn_no)` 幂等覆盖。」
+3. 「`expertTurns` 必须传专家 `turn.done` 的条数，不是 `turns.length` —— 后者含开场/追问/总结，真实一场约 27 条会显示 27/20。」
+
+**意图**：S7/S7.5 只证明壳能立住，S8 要证明**壳里的每个数字都来自真实事件**。
+三件事必须同时成立：五条数据流在客户端仍然物理分开（H1）、断线补发不丢帧（AC-2.3）、
+页面里任何一处都不出现原始 JSON（AC-1.17）。视觉已冻结，所以这轮只换数据源。
+
+**范围裁决（Ask first 全部走完）**：
+- 首页三件套（色点 / 嘉宾数 / 摘要预览）在列表契约里都没有数据 → 选**加 additive 字段**
+  `expert_color_ids` / `guest_count` / `summary_text`，同步改 `openapi.yaml` + `spec.md` AC-3.1 + zod + 一条多讨论测试。
+- 仓库没有 `.env`，`fake.ts` 是 S10 的活 → 用 `D:\temp\s8-fake-llm.ts`（真实 app + 注入 scripted transport）起 8787，
+  仓库零改动。为了让 preparing/speaking 可观测，fake 每个调用故意 sleep 220ms。
+- SESSION_MAP 的字面范围只有 `TheaterView`，但「真跑一场」要从 UI 建场 → 三页全接（用户在开工前拍板）。
+
+**卡点 1（真 bug）：`speaking` 一帧都画不出来。**
+`runner.ts` 的 `finishTurn` 把 `speaking` + `turn.done` + `idle` 写在**同一个事务**里，三帧同一批到达，Vue 只渲染一次。
+首轮 Playwright 观测：`maxSpeaking=0`，只看到 preparing。
+→ store 里给 speaking→idle 加 **600ms 最小驻留**（不是造数据，是把瞬时迁移拉到可感知）；任何更新的 agent 帧会取消它。
+→ 又发现驻留导致**两位嘉宾同时「发言中」**（上一位还没收口，下一位已开始）→ 新发言人出现时立即把上一位收口，实测 `maxSpeaking=1`。
+
+**卡点 2（真 bug）：transcript 不跟随，总结永远看不到。**
+`TranscriptFeed` 只在 mount 时滚一次底。S8 在视图层加 `watch(turns.length)`，但第一版用**更新后**的
+`scrollHeight - scrollTop - clientHeight < 120` 判断「用户是否在底部」——总结卡片很高，一出现就被判成
+「用户往上翻了」，于是停在追问那条。截图证据：现场 22 条，可见最后一条是追问。
+→ 改成 `flush:'pre'` 语义：在 `nextTick` **之前**（DOM 还是旧高度）量 `distanceBefore`，再滚；
+刷新重放后 `scrollTop` 从 0 变成 1010（= scrollHeight − clientHeight），总结卡片可见。
+
+**卡点 3（测试盲区）：单讨论测试骗过了相关性。**
+`expert_color_ids` 用相关子查询 + 聚合 `ORDER BY`；单测库里只有一场讨论，所以「相关没写对」也能绿。
+→ 审查时直接打 http 接口看 5 行样例：每行必须恰好 4 个颜色（draft 那行 0 个），确认不是全库 `group_concat`。
+
+**验收数字**（执行 session 自测；审查复跑见本节末尾「S8 复审」）：`pnpm check` 绿（12 文件 / 90 测试）；`pnpm -C web build` exit 0；
+四条 grep 全空（`mock/` 引用 / `new EventSource` / `any|ts-ignore` / `#hex`）；
+Playwright 真跑一场：22 条 turn（1 开场 + 16 专家 + 4 追问 + 1 总结）、`16 / 20 条专家发言 · 已结束`、
+共识与分歧**在第 2 条专家发言时**各出现 1 条（不是结束才出现）、三态徽章全部出现、刷新后 22 条全部重放重建、
+`scrollHeight === innerHeight`、页面文本无 `"type":` / `{"` / `ledger`。截图在 `D:\temp\s8-shots\`。
+
+**教训**：「接口返回对」不等于「页面看得见」。这一轮三个真 bug 里有两个是**渲染时序**问题
+（同一事务的三帧 / 滚动判断用了错的高度），类型检查和单测都抓不到，只有真跑一场并截图才现形。
+
+---
+
+### S8 复审（审查 session，2026-11-18）
+
+**独立复跑**：`pnpm check` 12 文件 / 90 测试、exit 0；`pnpm -C web build` exit 0；四条 grep 全空
+（`mock/` / `EventSource` / `as any|ts-ignore` / 组件内 `#hex`）；DB 回到 5 / 25 / 31 / 127、`llm_calls=0`。
+用 `D:\temp\s8-fake-llm.ts` + `vite dev` 自己走了一遍浏览器链路（不是复述执行 session 的截图）。
+
+**审查判定**：S8 主体合格 —— 五份独立 state 真的是五个 ref、`turn.started` 按 `(guest_id, turn_no)` 幂等、
+持久帧按 seq 去重、404 不重连、`turn.delta` 不进数组、页面无原始 JSON。
+但发现 **3 个汇报里没有的缺陷**，当场修掉并复验：
+
+1. **404 / 详情失败时 `loadError` 没人渲染**：`store.loadError` 写得很全，但三个视图都没读它 →
+   打开不存在的讨论会得到一个空壳演播厅。修：`failedView` 纳入 `loadError && detail === null`，
+   标题/hint 区分「无法打开这场讨论」与「本场讨论失败」；顺带把取消失败拆到 `cancelError`，在运输条就地显示。
+2. **`confirm` 成功但 `start` 失败会死锁**：原实现把 confirm+start 塞进一个 store 方法，
+   start 撞 409（例如同时已有 3 场 running）后，重试会二次 confirm → 409 ALREADY_LOCKED，
+   用户卡在确认页、阵容已锁定却永远开不了。修：拆成 `confirmRoster` / `start` 两步，
+   视图记录 `rosterLocked`，重试只重发 start；`detail.status='running'` 时按钮直接进演播厅。
+   复验：重开一场 running 的确认页，主按钮文案变成「开始讨论」。
+3. **动作失败整页替换内容**：`home.error` 是单一错误源，create/confirm 失败时首页列表、确认页阵容
+   会被整页换成错误态。修：页面级 error 只在「详情/列表还没拿到」时生效，其余走行内错误，内容保留。
+
+**裁决：`speaking` 用方案 C（不是驻留、也不是流式）**
+根因不在前端：`runner.finishTurn` 把 `speaking` + `turn.done` + `idle` 写进同一事务，三帧同批到达。
+- 600ms 驻留（S8 现状）：客户端说谎，多一套定时器与「最多一位发言中」补偿，且状态在发言**结束后**才出现；
+- 真流式（`turn.delta`）：要改 LLM 流式解析、半截内容、取消语义，对 AC-1.20 是过度设计；
+- **方案 C**：`beginTurn` 的 `turn.started + preparing` 保持模型调用前提交，**调用模型前再单独提交 `speaking`**，
+  `finishTurn` 只写 `turns + done + idle`。零新事件类型、每轮多一次提交，speaking 可见时长 = 模型耗时（1–3s）。
+  S9 实现并删掉驻留；`events.md §8.1 / §7.1` 已按此改正（原契约写「与 speaking 同一事务」是自相矛盾的根因）。
+
+**另外两件挂到 S9**：AC-3.8（localStorage `sessionId` + 隐藏四个写入口，纯前端）；
+`dropped` 条目不得渲染（S9 归并后会出现）。全部写进 `docs/OPEN_ISSUES.md` 与 `SESSION_MAP §S9`。
+
+**教训**：S8 的两个「真 bug」都是**渲染时序**；我复审抓到的两个是**错误路径**与**多步写操作的部分失败**。
+单测与 happy-path 真跑都不会碰这些分支，下一轮验收必须至少各点一次：404、动作失败、二次重试。

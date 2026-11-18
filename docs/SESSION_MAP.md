@@ -717,6 +717,20 @@ ConsensusBoard / HostBar / DiscussionCard / GuestCard / NewDiscussionForm。
 - **允许改**：`server/src/modules/summary/**`、`server/src/modules/turn/**`（仅串联）、`web/src/components/theater/Summary*`
 - **验收**：空 transcript、嘉宾全失败、总结超时，三种边界都有兜底
 
+**S8 复审补进本轮的（必须一起做，否则 F4/F5/F1 收不了）**
+
+1. **`speaking` 根治（方案 C，已裁定）**：`beginTurn` 保持 `turn.started + preparing` 在模型调用前提交；
+   在**调用模型之前**单独提交 `agent.status(speaking)`；`finishTurn` 只写 `turns + turn.done + idle`。
+   然后删掉 `stores/discussion.ts` 里的 600ms 驻留（`SPEAKING_DWELL_MS`、定时器、「同时最多一位发言中」补偿）。
+   **不做流式**：`turn.delta` 仍允许为 0 帧。验收：真跑一场，`speaking` 可见时长 ≈ 单次模型调用耗时。
+2. **AC-3.8（纯前端）**：localStorage 生成/持久化 `sessionId`（UUID），建讨论时带上；
+   详情 `session_id` 与本地不同 → 隐藏「生成 / 确认 / 开始 / 取消」四个入口，且不渲染可点击的隐藏按钮。
+3. **`dropped` 不渲染**：归并把被推翻项置 `dropped` 后，store 或 `ConsensusBoard` 二选一过滤，别两处都写。
+4. 增补允许改：`web/src/stores/discussion.ts`、`web/src/api/{client,types}.ts`、
+   `web/src/views/{Home,GuestConfirm,Theater}View.vue`、`web/src/components/home/DiscussionCard.vue`、
+   `web/src/components/theater/HostBar.vue`、`server/src/modules/turn/runner.ts`（只改状态帧时序）。
+   仍然**不许**新造视觉；新面板沿用 `DESIGN.md` v2.1 的 token 与基础件。
+
 ```
 已读 AGENTS.md。本次执行 S9：收尾、共识定稿、失败兜底。允许改：
 server/src/modules/summary/summary.ts, server/src/modules/summary/merge.ts,

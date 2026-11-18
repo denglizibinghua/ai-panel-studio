@@ -258,6 +258,8 @@ data: {"status":"ready","previous_status":"draft","updated_at":"2026-11-17T08:30
   1. `confirm` 事务内为**每位**嘉宾写一条 `state='idle'`（`updated_seq` 必须取该事件 seq，
      不得留 0）→ AC-1.7；
   2. 运行期每次状态迁移 `idle → preparing → speaking → idle` 时写一条 → AC-1.20。
+     `preparing` 与 `turn.started` 同事务（模型调用前）；`speaking` 单独提交于模型调用前；
+     `idle` 与 `turn.done` 同事务。三者不得挤进同一个提交批次（否则 UI 只能看到最后一帧）。
 - 覆盖 AC：**AC-1.7 / AC-1.20**；约束面：AC-1.17（不得含推理原文）、AC-1.23（不得进
   transcript 区）。
 
@@ -281,7 +283,10 @@ data: {"guest_id":7,"state":"speaking","focus":"成本与体验的取舍"}
 | `turn_no` | integer ≥ 1 | 该讨论内发言序号（与 `seq` 是两套编号） |
 | `speech_type` | enum | `opening` \| `challenge` \| `supplement` \| `rebuttal` \| `question` \| `summary` |
 
-触发：开始生成该条发言时（与 `agent.status(speaking)` 同一事务单元）。
+触发：决定由该嘉宾发言时（与 `agent.status(preparing)` 同一事务单元，**在模型调用之前提交**）。
+`agent.status(speaking)` 是**另一次提交**：必须在模型调用**开始之前**发出、在 `turn.done` 之前到达。
+理由：若 `speaking` 与 `turn.done` / `idle` 写进同一个事务，三帧同批推送，浏览器只会渲染最后一帧，
+AC-1.20 的「发言中」在本机与 E2E 里都不可观测（S8 实测）。
 覆盖 AC：**AC-1.9**（发言开始信号）；约束面：AC-1.23（该帧不得生成 transcript 条目）。
 
 > **⚠️ `turn.started` 可能没有配对的 `turn.done`。** 发言生成失败（模型超时 / 空输出）时，

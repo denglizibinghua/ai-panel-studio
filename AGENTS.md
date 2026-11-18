@@ -1,4 +1,4 @@
-﻿# AGENTS.md — AI Panel Studio
+# AGENTS.md — AI Panel Studio
 
 > 本文件是本仓库对 AI 编码助手的唯一契约。任何会话开始前必读。
 > 纪律：本文件 ≤200 行。超过就把细节搬进 `docs/`，这里只留约束与指针。
@@ -7,34 +7,18 @@
 
 ## 0. 当前阶段（只由审查 session 更新，只改这一段；执行 session 不许动）
 
-- 当前 Session：`S7.5` 已完成（设计系统重写）。`docs/DESIGN.md` 覆盖为 **STAGE v2.1**（参考 `design-md/linear.app`）：
-  方向层 + 7 档字号 + 四级表面 + 仅描边做层次（全站零投影）+ 单一反白强调 + 三页共用 1440 页框。
-  `tokens.css` 重写（`--bg-canvas/inset/surface/raised/hover`、`--fs-micro..xl`、`--r-xs..lg`），
-  `atoms.css` 与 3 个 view / 12 个组件重排；共 18 个文件，`pnpm -C web build` 绿，组件内零裸色值。
-  复审复测：三页左边缘 1440/1280 = 24、390 = 16；三档 `scrollHeight===innerHeight` 且无横溢；
-  页头三页同为 56+1px；截图在 `D:\temp\s7.5-shots\`（审查后重拍的见 `D:\temp\s7.5-review-shots\`）。
-- 已完成：S0 契约、S1 接口与事件协议、S2 骨架与数据层、S3 嘉宾生成（仅 `locked=0`）、S4 主持人账本、S5 调度决策、S6 SSE 总线 + confirm、S6.5 讨论生命周期 + 主循环、S7 三页骨架、**S7.5 设计系统重写**。
-- 下一步：**S8 状态层接线**（`web/src/stores/**`、`web/src/api/**`、`TheaterView` 的 props 来源）。
-  视觉已冻结：S8 只接线，不许再新造视觉；`docs/DESIGN.md` v2.1 是唯一落点。
-- 已知未决：
-  - **首页专家色点没有真实数据源**：列表契约 `DiscussionSummary` 不含 guests（五流隔离），
-    `HomeView.colorIdsOf()` 现在按 id 在 mock 专家色里循环取，只为 S7.5 走查。S8 必须删掉循环，二选一：
-    ① 列表载荷加 additive 字段 `expert_color_ids`（Ask first：改 contracts + zod + spec）；
-    ② 拿不到就隐藏色点（`DiscussionCard` 在 `guestColorIds` 为空时已不渲染）。
-  - **业务组件仍 import mock 类型**（`MockDiscussion`、`MockAgentStatus`）。S8 接线时换成 shared 类型，
-    不许把 mock 类型带进生产路径。
-  - **简报进度分子**必须用 `expert_turn_count`（AC-1.13，分母 20）。用 `turns.length` 会把开场/追问/总结
-    算进去，真实一场约 27 条 → 27/20。已写进 `DESIGN.md §7`，S8 的 store 要提供该计数。
-  - **响应式一律 CSS 驱动**。S7 实测：Playwright 视口仿真下 `matchMedia(...).addEventListener('change')` **不触发**
-    （探针 0 次、`matches` 已为 true），JS 读视口会让 390px 下三块面板同时渲染。S8/S10 不得引入 JS 视口判断。
-  - S7 的 `?state=empty|loading|error|failed` 是纯前端 QA 开关（无请求），S8 接线后改为真实 store 状态，S11 删除并重拍截图。
-  - `web/src/mock/mock.ts` 是唯一假数据源，S10 E2E 仍可用；不要在组件里另造第二份样例。
-  - `AppInput` / `AppStepper` / `PageShell` 是 S7 新增，已登记在 `DESIGN.md` §6 / §7；业务组件仍只能拼基础件。
-  - **`guests/generate` 仍未发 `state.generating` / `state.draft`** —— S6.5 声明范围不含该文件，需单独裁决并入 S8。
-  - 单条发言失败会让 `turns.turn_no` 留空洞（正常路径不触发）；`ledger.turn_no` 已改为独立单调序号。
-  - summary 只硬保证 ≤400 与「失败兜底」，150–250 字目前靠 prompt 约束（S9 收口）。
-  - `requestLedger` 的传输错误直接上抛，runner 已承接 `run.failed`；`LedgerContext.roster` 只传可发言专家。
-  - 每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
+- 当前 Session：`S8` 已完成并复审通过（状态层接线）。三页换真实数据：`web/src/api/`（client/types/手写 SSE）+
+  `web/src/stores/`（`discussion` 五份独立 state + `home`），视图不再 import mock；组件只改 prop 类型。
+  列表契约 additive（用户批准）：`guest_count` / `expert_color_ids` / `summary_text`。复测：`pnpm check` 90 测试、
+  `web build` exit 0；`D:\temp\s8-fake-llm.ts` 真跑：404 错误面板、新建→确认→开始→演播厅全通、`4/20 条专家发言`、
+  `speaking` 可见、重开确认页显示「开始讨论」、无原始 JSON、无整页滚动。复审修 3 处：404 错误面板、
+  `confirm`/`start` 拆分防死锁、动作失败不再整页替换内容。
+- 已完成：S0–S8（契约 / 协议 / 数据层 / 嘉宾生成 / 账本 / 决策 / SSE / 主循环 / 三页骨架 / 设计系统 / 状态层）。
+- 下一步：**S9 收尾与兜底**（`summary/**` 定稿 + 归并、`support_guest_ids` 回填、三种兜底、`retry-summary`、
+  SummaryPanel 三态）+ S8 复审三件事（`speaking` 根治 / AC-3.8 / `dropped` 不渲染）。视觉仍按 DESIGN v2.1。
+- **未决事项全在 `docs/OPEN_ISSUES.md`**（每轮由审查 session 更新，读完再开 S9）；最高优先级是
+  §1 `speaking`（方案 C：模型调用前发 speaking、删 600ms 驻留）、§2 AC-3.8、§3 `dropped` 过滤。
+- 每个 Session 收尾按 `docs/COVERAGE.md` 逐行核对一遍（§8 DoD 已含）
 
 ---
 
@@ -145,6 +129,9 @@ specs/001-panel/
 11. **前端样式只能引用 `web/src/styles/tokens.css` 的变量**。组件里禁止出现 `#hex` / `rgb()` / `hsl()`，间距只用 `--sp-1..7`。自查：`grep -rn "#[0-9a-fA-F]\{6\}" web/src/components` 必须为空。
 12. **`color_id` → CSS 变量只有一个映射点**：`web/src/styles/expert-colors.ts` 的 `expertColorStyle()`。任何组件不得写 `if (id === 'amber')`，不得维护第二份色表。
 13. **业务组件只能用 `components/common/` 的基础件拼**（当前 7 个，见 `docs/DESIGN.md` §6）；要新样式先扩 `docs/DESIGN.md` + `tokens.css` + `atoms.css`，再写组件。禁止在业务组件里重造按钮/输入框。
+14. **响应式与滚动一律由 CSS / DOM 度量驱动，禁止 JS 读视口做分支**。断点用 `@media`（容器自身）与 `@container`（面板内部）；
+    自动跟随一律在 DOM 更新**前**量距离（Vue 用 `watch(flush:'pre')`）。S7 的 `matchMedia` 在 Playwright 视口仿真下不触发，
+    S8 用更新后的 `scrollHeight` 判断「是否在底部」把总结卡片误判成「用户往上翻」，两次都是全绿测试里抓不到的。
 
 ---
 
